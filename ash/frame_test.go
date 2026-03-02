@@ -255,6 +255,7 @@ func TestDecodeFrame(t *testing.T) {
 }
 
 func TestDataControlByte(t *testing.T) {
+	// Per UG101: bits 6-4 = frmNum, bit 3 = reTx, bits 2-0 = ackNum.
 	tests := []struct {
 		name           string
 		frmNum, ackNum byte
@@ -262,10 +263,10 @@ func TestDataControlByte(t *testing.T) {
 		want           byte
 	}{
 		{"frmNum=0 ackNum=0", 0, 0, false, 0x00},
-		{"frmNum=1 ackNum=0", 1, 0, false, 0x01},
-		{"frmNum=0 ackNum=1", 0, 1, false, 0x10},
-		{"frmNum=3 ackNum=5", 3, 5, false, 0x53},
-		{"retransmission", 2, 3, true, 0x3A},
+		{"frmNum=1 ackNum=0", 1, 0, false, 0x10},
+		{"frmNum=0 ackNum=1", 0, 1, false, 0x01},
+		{"frmNum=3 ackNum=5", 3, 5, false, 0x35},
+		{"retransmission", 2, 3, true, 0x2B},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -279,7 +280,8 @@ func TestDataControlByte(t *testing.T) {
 }
 
 func TestParseDataControl(t *testing.T) {
-	frmNum, ackNum, reTx := parseDataControl(0x3A)
+	// 0x2B = 0010_1011: frmNum=2 (bits 6-4), reTx=1 (bit 3), ackNum=3 (bits 2-0)
+	frmNum, ackNum, reTx := parseDataControl(0x2B)
 	if frmNum != 2 {
 		t.Errorf("frmNum = %d, want 2", frmNum)
 	}
@@ -314,6 +316,217 @@ func TestCancelBytes(t *testing.T) {
 	want := []byte{0x1A, 0x1A, 0x1A, 0x1A, 0x1A}
 	if !bytes.Equal(got, want) {
 		t.Errorf("cancelBytes(5) = %x, want %x", got, want)
+	}
+}
+
+func TestEncodeDecodeDataFrameRoundtrip(t *testing.T) {
+	tests := []struct {
+		name    string
+		control byte
+		payload []byte
+	}{
+		{
+			name:    "EZSP version command",
+			control: dataControlByte(0, 0, false),
+			payload: []byte{0x00, 0x00, 0x00, 0x04},
+		},
+		{
+			name:    "retransmission",
+			control: dataControlByte(2, 3, true),
+			payload: []byte{0xDE, 0xAD, 0xBE, 0xEF},
+		},
+		{
+			name:    "single byte payload",
+			control: dataControlByte(1, 0, false),
+			payload: []byte{0xFF},
+		},
+		{
+			name:    "empty payload",
+			control: dataControlByte(0, 0, false),
+			payload: []byte{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Encode
+			wire := encodeDataFrame(tt.control, tt.payload)
+
+			// Simulate receive: strip flag byte, unstuff (no de-randomization in reader)
+			if wire[len(wire)-1] != byteFlag {
+				t.Fatal("encoded frame missing flag byte")
+			}
+			raw := make([]byte, len(wire)-1)
+			copy(raw, wire[:len(wire)-1])
+			raw = unstuff(raw)
+
+			// Decode (handles CRC check + de-randomization)
+			control, data, err := decodeFrame(raw)
+			if err != nil {
+				t.Fatalf("decodeFrame() error = %v", err)
+			}
+			if control != tt.control {
+				t.Errorf("control = 0x%02X, want 0x%02X", control, tt.control)
+			}
+			if !bytes.Equal(data, tt.payload) {
+				t.Errorf("data = %x, want %x", data, tt.payload)
+			}
+		})
+	}
+}
+
+func TestEncodeDataFrameRandomizesBeforeCRC(t *testing.T) {
+	// Verify that the data field on the wire is randomized but the CRC is not.
+	// The CRC should cover [control + randomized data].
+	payload := []byte{0x00, 0x00, 0x00, 0x04}
+	control := dataControlByte(0, 0, false) // 0x00
+
+	wire := encodeDataFrame(control, payload)
+
+	// Strip flag, unstuff
+	raw := make([]byte, len(wire)-1)
+	copy(raw, wire[:len(wire)-1])
+	raw = unstuff(raw)
+
+	// raw = [control, rand_data..., CRC_hi, CRC_lo]
+	// The data portion should be randomized (XOR with LFSR)
+	randData := raw[1 : len(raw)-2]
+	wantRand := make([]byte, len(payload))
+	copy(wantRand, payload)
+	randomize(wantRand)
+
+	if !bytes.Equal(randData, wantRand) {
+		t.Errorf("on-wire data = %x, want randomized %x", randData, wantRand)
+	}
+
+	// The CRC should cover [control + randomized data]
+	crcPayload := raw[:len(raw)-2]
+	wantCRC := crcCCITT(crcPayload)
+	gotCRC := uint16(raw[len(raw)-2])<<8 | uint16(raw[len(raw)-1])
+	if gotCRC != wantCRC {
+		t.Errorf("CRC = 0x%04X, want 0x%04X", gotCRC, wantCRC)
+	}
+}
+
+// TestEncodeDataFrameAgainstBellowsReference verifies that encodeDataFrame
+// produces identical wire bytes to an independent reference implementation
+// derived from bellows (zigpy's ASH layer). The reference uses NO ash package
+// functions — it inlines CRC, LFSR, and stuffing from first principles.
+//
+// This catches regressions in randomization order, CRC scope, control byte
+// layout, and byte stuffing that would otherwise only surface on real hardware.
+func TestEncodeDataFrameAgainstBellowsReference(t *testing.T) {
+	// --- Independent reference implementation (bellows-compatible) ---
+
+	// CRC-CCITT (polynomial 0x1021, init 0xFFFF) — inline table.
+	var refCRCTable [256]uint16
+	for i := range 256 {
+		crc := uint16(i) << 8
+		for range 8 {
+			if crc&0x8000 != 0 {
+				crc = (crc << 1) ^ 0x1021
+			} else {
+				crc <<= 1
+			}
+		}
+		refCRCTable[i] = crc
+	}
+	refCRC := func(data []byte) uint16 {
+		crc := uint16(0xFFFF)
+		for _, b := range data {
+			crc = (crc << 8) ^ refCRCTable[byte(crc>>8)^b]
+		}
+		return crc
+	}
+
+	// LFSR randomization (seed 0x42, polynomial 0xB8).
+	refRandomize := func(data []byte) {
+		lfsr := byte(0x42)
+		for i := range data {
+			data[i] ^= lfsr
+			lsb := lfsr & 0x01
+			lfsr >>= 1
+			if lsb != 0 {
+				lfsr ^= 0xB8
+			}
+		}
+	}
+
+	// Byte stuffing: escape reserved bytes with [0x7D, b^0x20].
+	refIsReserved := func(b byte) bool {
+		return b == 0x7E || b == 0x7D || b == 0x11 || b == 0x13 || b == 0x18 || b == 0x1A
+	}
+	refStuff := func(data []byte) []byte {
+		out := make([]byte, 0, len(data)*2)
+		for _, b := range data {
+			if refIsReserved(b) {
+				out = append(out, 0x7D, b^0x20)
+			} else {
+				out = append(out, b)
+			}
+		}
+		return out
+	}
+
+	// Bellows-compatible DATA frame encoder:
+	// 1. Randomize payload (NOT control byte)
+	// 2. CRC over [control + randomized payload]
+	// 3. Stuff [control + randomized payload + CRC_hi + CRC_lo]
+	// 4. Append flag byte 0x7E
+	refEncode := func(control byte, payload []byte) []byte {
+		randData := make([]byte, len(payload))
+		copy(randData, payload)
+		refRandomize(randData)
+
+		frame := make([]byte, 0, 1+len(payload)+2)
+		frame = append(frame, control)
+		frame = append(frame, randData...)
+
+		crc := refCRC(frame)
+		frame = append(frame, byte(crc>>8), byte(crc))
+
+		frame = refStuff(frame)
+		frame = append(frame, 0x7E)
+		return frame
+	}
+
+	// --- Test vectors ---
+	tests := []struct {
+		name    string
+		control byte
+		payload []byte
+	}{
+		{
+			name:    "phase1 EZSP version (frmNum=0 ackNum=0)",
+			control: 0x00, // dataControlByte(0, 0, false)
+			payload: []byte{0x00, 0x00, 0x00, 0x04},
+		},
+		{
+			name:    "phase2 EZSP extended version (frmNum=1 ackNum=1)",
+			control: 0x11, // dataControlByte(1, 1, false)
+			payload: []byte{0x01, 0x00, 0x01, 0x00, 0x00, 0x0D},
+		},
+		{
+			name:    "retransmission (frmNum=2 ackNum=3 reTx)",
+			control: 0x2B, // dataControlByte(2, 3, true)
+			payload: []byte{0xDE, 0xAD, 0xBE, 0xEF},
+		},
+		{
+			name:    "all-zeros payload",
+			control: 0x00,
+			payload: []byte{0x00, 0x00, 0x00, 0x00},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := refEncode(tt.control, tt.payload)
+			got := encodeDataFrame(tt.control, tt.payload)
+
+			if !bytes.Equal(got, want) {
+				t.Errorf("encodeDataFrame(0x%02X, %x)\n  got:  %x\n  want: %x",
+					tt.control, tt.payload, got, want)
+			}
+		})
 	}
 }
 

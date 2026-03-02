@@ -138,7 +138,7 @@ func isReserved(b byte) bool {
 
 // randomize XORs data with the LFSR pseudo-random sequence.
 // The LFSR resets to seed (0x42) for each frame.
-// This is applied to everything after the control byte (data + CRC).
+// Per UG101 §4.3, this is applied to the data field (between control byte and CRC).
 func randomize(data []byte) {
 	lfsr := byte(lfsrSeed)
 	for i := range data {
@@ -177,8 +177,11 @@ func cancelBytes(n int) []byte {
 	return b
 }
 
-// decodeFrame parses a raw (unstuffed, de-randomized) frame.
+// decodeFrame parses a raw unstuffed frame.
 // It verifies CRC and returns the control byte and data payload.
+// For DATA frames, the data field arrives randomized on the wire and the CRC
+// covers [control + randomized data]. After CRC verification, the data is
+// de-randomized before being returned to the caller.
 func decodeFrame(raw []byte) (control byte, data []byte, err error) {
 	if len(raw) < 3 {
 		return 0, nil, errors.New("ash: frame too short")
@@ -186,7 +189,8 @@ func decodeFrame(raw []byte) (control byte, data []byte, err error) {
 
 	control = raw[0]
 
-	// CRC covers everything except the CRC bytes themselves
+	// CRC covers everything except the CRC bytes themselves.
+	// For DATA frames this includes the still-randomized data.
 	payload := raw[:len(raw)-2]
 	crcHi := raw[len(raw)-2]
 	crcLo := raw[len(raw)-1]
@@ -198,23 +202,32 @@ func decodeFrame(raw []byte) (control byte, data []byte, err error) {
 	}
 
 	data = raw[1 : len(raw)-2]
+
+	// De-randomize data field for DATA frames (after CRC verification).
+	if frameType(control) == frameTypeDATA {
+		randomize(data) // XOR is self-inverse
+	}
+
 	return control, data, nil
 }
 
 // encodeDataFrame encodes a DATA frame with the given control byte and payload.
-// The frame is randomized (data+CRC), byte-stuffed, and the flag byte is appended.
+// Per UG101 §4.3, the data field is randomized before CRC computation.
+// The CRC covers [control + randomized data] and is not itself randomized.
 func encodeDataFrame(control byte, payload []byte) []byte {
-	// Build frame: control + data
+	// Randomize the data field before CRC computation.
+	randData := make([]byte, len(payload))
+	copy(randData, payload)
+	randomize(randData)
+
+	// Build frame: control + randomized data
 	frame := make([]byte, 0, 1+len(payload)+2)
 	frame = append(frame, control)
-	frame = append(frame, payload...)
+	frame = append(frame, randData...)
 
-	// Compute CRC over control + data
+	// Compute CRC over [control + randomized data]
 	crc := crcCCITT(frame)
 	frame = append(frame, byte(crc>>8), byte(crc))
-
-	// Randomize everything after control byte (data + CRC)
-	randomize(frame[1:])
 
 	// Byte-stuff and append flag
 	frame = stuff(frame)
@@ -235,9 +248,10 @@ func encodeACK(ackNum byte) []byte {
 }
 
 // dataControlByte builds a DATA frame control byte.
+// Per UG101: bits 6-4 = frmNum, bit 3 = reTx, bits 2-0 = ackNum.
 func dataControlByte(frmNum, ackNum byte, reTx bool) byte {
-	b := (ackNum & 0x07) << 4
-	b |= frmNum & 0x07
+	b := (frmNum & 0x07) << 4
+	b |= ackNum & 0x07
 	if reTx {
 		b |= 0x08
 	}
@@ -245,9 +259,10 @@ func dataControlByte(frmNum, ackNum byte, reTx bool) byte {
 }
 
 // parseDataControl extracts fields from a DATA frame control byte.
+// Per UG101: bits 6-4 = frmNum, bit 3 = reTx, bits 2-0 = ackNum.
 func parseDataControl(control byte) (frmNum, ackNum byte, reTx bool) {
-	frmNum = control & 0x07
-	ackNum = (control >> 4) & 0x07
+	frmNum = (control >> 4) & 0x07
+	ackNum = control & 0x07
 	reTx = control&0x08 != 0
 	return
 }
