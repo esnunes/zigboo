@@ -10,5 +10,8 @@ const (
 )
 
 func tcflush(fd int) error {
-	return unix.IoctlSetInt(fd, unix.TIOCFLUSH, unix.TCIFLUSH)
+	// TIOCFLUSH on macOS/BSD expects a pointer to an int (the queue selector).
+	// IoctlSetPointerInt passes &value, unlike IoctlSetInt which passes
+	// the value directly (causing EFAULT).
+	return unix.IoctlSetPointerInt(fd, unix.TIOCFLUSH, unix.TCIFLUSH)
 }

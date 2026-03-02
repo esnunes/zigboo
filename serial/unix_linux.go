@@ -10,6 +10,6 @@ const (
 )
 
 func tcflush(fd int) error {
-	_, err := unix.IoctlGetInt(fd, unix.TCFLSH)
-	return err
+	// TCFLSH on Linux takes the queue selector as a plain int value.
+	return unix.IoctlSetInt(fd, unix.TCFLSH, unix.TCIFLUSH)
 }

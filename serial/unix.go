@@ -64,11 +64,8 @@ func (p *unixPort) Close() error {
 }
 
 func (p *unixPort) Flush() error {
-	if err := unix.IoctlSetInt(p.fd, unix.TIOCFLUSH, unix.TCIFLUSH); err != nil {
-		// Fall back to tcflush via termios if TIOCFLUSH is not available.
-		if err := tcflush(p.fd); err != nil {
-			return fmt.Errorf("serial: flush: %w", err)
-		}
+	if err := tcflush(p.fd); err != nil {
+		return fmt.Errorf("serial: flush: %w", err)
 	}
 	return nil
 }
@@ -119,8 +116,12 @@ func configure(fd int, baudRate int) error {
 	// CREAD: enable receiver
 	termios.Cflag |= unix.CREAD
 
-	// VMIN=1, VTIME=1 (100ms inter-byte timeout)
-	termios.Cc[unix.VMIN] = 1
+	// VMIN=0, VTIME=1: Read returns after 100ms even if no bytes arrive.
+	// This allows the reader goroutine to periodically check for context
+	// cancellation and exit cleanly. With VMIN=1, Read blocks until at
+	// least one byte arrives, causing hangs on shutdown when the dongle
+	// is idle. See Go issue #10001 (Close vs Read race on fds).
+	termios.Cc[unix.VMIN] = 0
 	termios.Cc[unix.VTIME] = 1
 
 	// Set baud rate
