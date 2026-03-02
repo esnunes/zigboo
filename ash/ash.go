@@ -224,12 +224,6 @@ func (c *Conn) waitForResponse(ctx context.Context) ([]byte, error) {
 			case frameTypeDATA:
 				frmNum, _, _ := parseDataControl(control)
 
-				// De-randomize the payload (everything after control byte was randomized).
-				// Note: payload is already the de-randomized data from decodeDataFrame.
-				// Actually, we need to de-randomize at the frame level.
-				// The raw frame from the reader has already been unstuffed but NOT de-randomized.
-				// De-randomize now.
-
 				// Send ACK for this frame.
 				nextAck := (frmNum + 1) & 0x07
 				c.ackNum = nextAck
@@ -306,14 +300,9 @@ func (c *Conn) reader(ctx context.Context) {
 					raw = unstuff(raw)
 
 					if len(raw) >= 3 {
-						// De-randomize: for DATA frames, de-randomize everything
-						// after the control byte.
-						control := raw[0]
-						if frameType(control) == frameTypeDATA && len(raw) > 1 {
-							randomize(raw[1:]) // XOR is self-inverse
-						}
-
-						// Send to consumer, respecting cancellation.
+						// Send raw unstuffed frame to consumer.
+						// De-randomization of DATA frames happens in
+						// decodeFrame after CRC verification.
 						select {
 						case c.frames <- raw:
 						case <-ctx.Done():
