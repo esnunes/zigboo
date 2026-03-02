@@ -10,11 +10,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+
+	"github.com/esnunes/zigboo/ash"
+	"github.com/esnunes/zigboo/serial"
 )
 
 func main() {
@@ -73,8 +77,40 @@ func run(ctx context.Context, portPath string, cmd string) error {
 	}
 }
 
-func runReset(_ context.Context, _ string) error {
-	return fmt.Errorf("not implemented")
+// openConn opens a serial port and creates an ASH connection.
+// The caller must close both the connection and the port.
+func openConn(portPath string) (*ash.Conn, serial.Port, error) {
+	port, err := serial.Open(serial.Config{Path: portPath})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, fmt.Errorf("device not found: %s — check the path and ensure the dongle is plugged in", portPath)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return nil, nil, fmt.Errorf("permission denied: %s — add your user to the 'dialout' group (Linux) or check System Settings > Privacy (macOS)", portPath)
+		}
+		return nil, nil, err
+	}
+	conn := ash.New(port)
+	return conn, port, nil
+}
+
+func runReset(ctx context.Context, portPath string) error {
+	conn, port, err := openConn(portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	version, resetCode, err := conn.Reset(ctx)
+	if err != nil {
+		return fmt.Errorf("reset: %w", err)
+	}
+
+	fmt.Printf("ASH reset successful\n")
+	fmt.Printf("  Protocol version: %d\n", version)
+	fmt.Printf("  Reset code:       %d\n", resetCode)
+	return nil
 }
 
 func runVersion(_ context.Context, _ string) error {
