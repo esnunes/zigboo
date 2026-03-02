@@ -18,6 +18,7 @@ import (
 	"os/signal"
 
 	"github.com/esnunes/zigboo/ash"
+	"github.com/esnunes/zigboo/ezsp"
 	"github.com/esnunes/zigboo/serial"
 )
 
@@ -113,10 +114,73 @@ func runReset(ctx context.Context, portPath string) error {
 	return nil
 }
 
-func runVersion(_ context.Context, _ string) error {
-	return fmt.Errorf("not implemented")
+// resetAndNegotiate opens a connection, performs ASH reset, and negotiates EZSP version.
+// Returns the EZSP client ready for commands.
+func resetAndNegotiate(ctx context.Context, portPath string) (*ezsp.Client, *ash.Conn, serial.Port, error) {
+	conn, port, err := openConn(portPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if _, _, err := conn.Reset(ctx); err != nil {
+		conn.Close()
+		port.Close()
+		return nil, nil, nil, fmt.Errorf("reset: %w", err)
+	}
+
+	client := ezsp.New(conn)
+	return client, conn, port, nil
 }
 
-func runInfo(_ context.Context, _ string) error {
-	return fmt.Errorf("not implemented")
+func runVersion(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+	_ = client
+
+	info, err := client.NegotiateVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("version: %w", err)
+	}
+
+	fmt.Printf("EZSP version negotiation successful\n")
+	fmt.Printf("  Protocol version: %d\n", info.ProtocolVersion)
+	fmt.Printf("  Stack type:       %d\n", info.StackType)
+	fmt.Printf("  Stack version:    %s\n", info.StackVersionString())
+	return nil
+}
+
+func runInfo(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	info, err := client.NegotiateVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("info: %w", err)
+	}
+
+	nodeID, err := client.GetNodeID(ctx)
+	if err != nil {
+		return fmt.Errorf("info: %w", err)
+	}
+
+	eui64, err := client.GetEUI64(ctx)
+	if err != nil {
+		return fmt.Errorf("info: %w", err)
+	}
+
+	fmt.Printf("Dongle information\n")
+	fmt.Printf("  EZSP version:  %d\n", info.ProtocolVersion)
+	fmt.Printf("  Stack type:    %d\n", info.StackType)
+	fmt.Printf("  Stack version: %s\n", info.StackVersionString())
+	fmt.Printf("  Node ID:       0x%04X\n", nodeID)
+	fmt.Printf("  EUI-64:        %s\n", ezsp.FormatEUI64(eui64))
+	return nil
 }
