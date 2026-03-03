@@ -5,6 +5,9 @@
 //	zigboo --port /dev/ttyUSB0 reset     # ASH reset handshake
 //	zigboo --port /dev/ttyUSB0 version   # EZSP version negotiation
 //	zigboo --port /dev/ttyUSB0 info      # version + node-id + eui64
+//	zigboo --port /dev/ttyUSB0 network  # network state and parameters
+//	zigboo --port /dev/ttyUSB0 scan --type energy  # energy scan
+//	zigboo --port /dev/ttyUSB0 scan --type active  # active scan
 //	zigboo -v --port /dev/ttyUSB0 info   # verbose mode with frame dumps
 package main
 
@@ -33,6 +36,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  reset     perform ASH reset handshake\n")
 		fmt.Fprintf(os.Stderr, "  version   negotiate EZSP protocol version\n")
 		fmt.Fprintf(os.Stderr, "  info      print version, node ID, and EUI-64\n")
+		fmt.Fprintf(os.Stderr, "  network   show network state and parameters\n")
+		fmt.Fprintf(os.Stderr, "  scan      energy or active channel scan (--type energy|active)\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flag.PrintDefaults()
 	}
@@ -73,6 +78,10 @@ func run(ctx context.Context, portPath string, cmd string) error {
 		return runVersion(ctx, portPath)
 	case "info":
 		return runInfo(ctx, portPath)
+	case "network":
+		return runNetwork(ctx, portPath)
+	case "scan":
+		return runScan(ctx, portPath, flag.Args()[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
@@ -182,5 +191,92 @@ func runInfo(ctx context.Context, portPath string) error {
 	fmt.Printf("  Stack version: %s\n", info.StackVersionString())
 	fmt.Printf("  Node ID:       0x%04X\n", nodeID)
 	fmt.Printf("  EUI-64:        %s\n", ezsp.FormatEUI64(eui64))
+	return nil
+}
+
+func runNetwork(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	state, err := client.NetworkState(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	fmt.Printf("Network state: %s\n", state)
+
+	if state == ezsp.NetworkStatusNoNetwork {
+		return nil
+	}
+
+	nodeType, params, err := client.GetNetworkParameters(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	fmt.Printf("  PAN ID:        0x%04X\n", params.PanID)
+	fmt.Printf("  Extended PAN:  %s\n", ezsp.FormatEUI64(params.ExtendedPanID))
+	fmt.Printf("  Channel:       %d\n", params.RadioChannel)
+	fmt.Printf("  TX power:      %d dBm\n", params.RadioTxPower)
+	fmt.Printf("  Node type:     %s\n", nodeType)
+	return nil
+}
+
+func runScan(ctx context.Context, portPath string, args []string) error {
+	scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
+	scanType := scanFlags.String("type", "energy", "scan type: energy or active")
+	if err := scanFlags.Parse(args); err != nil {
+		return err
+	}
+
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+
+	switch *scanType {
+	case "energy":
+		results, errCh, err := client.StartEnergyScan(ctx, ezsp.DefaultChannelMask, 3)
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		fmt.Printf("Channel  RSSI\n")
+		for r := range results {
+			fmt.Printf("  %5d  %d dBm\n", r.Channel, r.MaxRSSI)
+		}
+		if err := <-errCh; err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+	case "active":
+		results, errCh, err := client.StartActiveScan(ctx, ezsp.DefaultChannelMask, 3)
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		fmt.Printf("Channel  PAN ID  Extended PAN ID                 Join  Profile  LQI  RSSI\n")
+		for r := range results {
+			fmt.Printf("  %5d  0x%04X  %s  %5t  %7d  %3d  %d dBm\n",
+				r.Channel, r.PanID, ezsp.FormatEUI64(r.ExtendedPanID),
+				r.AllowingJoin, r.StackProfile, r.LQI, r.RSSI)
+		}
+		if err := <-errCh; err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+	default:
+		return fmt.Errorf("scan: unknown type %q (use energy or active)", *scanType)
+	}
 	return nil
 }
