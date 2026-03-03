@@ -39,6 +39,12 @@ const (
 	// frameIDEnergyScanResultHandler is the callback for energy scan results (0x0048).
 	frameIDEnergyScanResultHandler = 0x0048
 
+	// frameIDGetConfigurationValue reads a configuration value (0x0052).
+	frameIDGetConfigurationValue = 0x0052
+
+	// frameIDSetConfigurationValue writes a configuration value (0x0053).
+	frameIDSetConfigurationValue = 0x0053
+
 	// frameIDGetEndpoint returns the endpoint number at a given index (0x012E).
 	frameIDGetEndpoint = 0x012E
 

@@ -1,5 +1,11 @@
 package ezsp
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // EmberNetworkStatus represents the NCP's current network state.
 type EmberNetworkStatus byte
 
@@ -114,4 +120,177 @@ type EndpointDescription struct {
 	DeviceVersion      uint8
 	InputClusterCount  uint8
 	OutputClusterCount uint8
+}
+
+// EzspConfigID identifies a configuration value on the NCP.
+// Use with GetConfigurationValue / SetConfigurationValue.
+type EzspConfigID uint8
+
+const (
+	ConfigPacketBufferCount                  EzspConfigID = 0x01
+	ConfigNeighborTableSize                  EzspConfigID = 0x02
+	ConfigAPSUnicastMessageCount             EzspConfigID = 0x03
+	ConfigBindingTableSize                   EzspConfigID = 0x04
+	ConfigAddressTableSize                   EzspConfigID = 0x05
+	ConfigMulticastTableSize                 EzspConfigID = 0x06
+	ConfigRouteTableSize                     EzspConfigID = 0x07
+	ConfigDiscoveryTableSize                 EzspConfigID = 0x08
+	ConfigStackProfile                       EzspConfigID = 0x0C
+	ConfigSecurityLevel                      EzspConfigID = 0x0D
+	ConfigMaxHops                            EzspConfigID = 0x10
+	ConfigMaxEndDeviceChildren               EzspConfigID = 0x11
+	ConfigIndirectTransmissionTimeout        EzspConfigID = 0x12
+	ConfigEndDevicePollTimeout               EzspConfigID = 0x13
+	ConfigTXPowerMode                        EzspConfigID = 0x17
+	ConfigDisableRelay                       EzspConfigID = 0x18
+	ConfigTrustCenterAddressCacheSize        EzspConfigID = 0x19
+	ConfigSourceRouteTableSize               EzspConfigID = 0x1A
+	ConfigFragmentWindowSize                 EzspConfigID = 0x1C
+	ConfigFragmentDelayMS                    EzspConfigID = 0x1D
+	ConfigKeyTableSize                       EzspConfigID = 0x1E
+	ConfigAPSACKTimeout                      EzspConfigID = 0x1F
+	ConfigBeaconJitterDuration               EzspConfigID = 0x20
+	ConfigEndDeviceBindTimeout               EzspConfigID = 0x21
+	ConfigPanIDConflictReportThreshold       EzspConfigID = 0x22
+	ConfigRequestKeyTimeout                  EzspConfigID = 0x24
+	ConfigCertificateTableSize               EzspConfigID = 0x29
+	ConfigApplicationZDOFlags                EzspConfigID = 0x2A
+	ConfigBroadcastTableSize                 EzspConfigID = 0x2B
+	ConfigMACFilterTableSize                 EzspConfigID = 0x2C
+	ConfigSupportedNetworks                  EzspConfigID = 0x2D
+	ConfigSendMulticastsToSleepyAddress      EzspConfigID = 0x2E
+	ConfigZLLGroupAddresses                  EzspConfigID = 0x2F
+	ConfigZLLRSSIThreshold                   EzspConfigID = 0x30
+	ConfigMTORRFlowControl                   EzspConfigID = 0x33
+	ConfigRetryQueueSize                     EzspConfigID = 0x34
+	ConfigNewBroadcastEntryThreshold         EzspConfigID = 0x35
+	ConfigTransientKeyTimeoutS               EzspConfigID = 0x36
+	ConfigBroadcastMinACKsNeeded             EzspConfigID = 0x37
+	ConfigTCRejoinsUsingWellKnownKeyTimeoutS EzspConfigID = 0x38
+	ConfigCTuneValue                         EzspConfigID = 0x39
+)
+
+// configNames maps each config ID to its human-readable name.
+var configNames = map[EzspConfigID]string{
+	ConfigPacketBufferCount:                  "PACKET_BUFFER_COUNT",
+	ConfigNeighborTableSize:                  "NEIGHBOR_TABLE_SIZE",
+	ConfigAPSUnicastMessageCount:             "APS_UNICAST_MESSAGE_COUNT",
+	ConfigBindingTableSize:                   "BINDING_TABLE_SIZE",
+	ConfigAddressTableSize:                   "ADDRESS_TABLE_SIZE",
+	ConfigMulticastTableSize:                 "MULTICAST_TABLE_SIZE",
+	ConfigRouteTableSize:                     "ROUTE_TABLE_SIZE",
+	ConfigDiscoveryTableSize:                 "DISCOVERY_TABLE_SIZE",
+	ConfigStackProfile:                       "STACK_PROFILE",
+	ConfigSecurityLevel:                      "SECURITY_LEVEL",
+	ConfigMaxHops:                            "MAX_HOPS",
+	ConfigMaxEndDeviceChildren:               "MAX_END_DEVICE_CHILDREN",
+	ConfigIndirectTransmissionTimeout:        "INDIRECT_TRANSMISSION_TIMEOUT",
+	ConfigEndDevicePollTimeout:               "END_DEVICE_POLL_TIMEOUT",
+	ConfigTXPowerMode:                        "TX_POWER_MODE",
+	ConfigDisableRelay:                       "DISABLE_RELAY",
+	ConfigTrustCenterAddressCacheSize:        "TRUST_CENTER_ADDRESS_CACHE_SIZE",
+	ConfigSourceRouteTableSize:               "SOURCE_ROUTE_TABLE_SIZE",
+	ConfigFragmentWindowSize:                 "FRAGMENT_WINDOW_SIZE",
+	ConfigFragmentDelayMS:                    "FRAGMENT_DELAY_MS",
+	ConfigKeyTableSize:                       "KEY_TABLE_SIZE",
+	ConfigAPSACKTimeout:                      "APS_ACK_TIMEOUT",
+	ConfigBeaconJitterDuration:               "BEACON_JITTER_DURATION",
+	ConfigEndDeviceBindTimeout:               "END_DEVICE_BIND_TIMEOUT",
+	ConfigPanIDConflictReportThreshold:       "PAN_ID_CONFLICT_REPORT_THRESHOLD",
+	ConfigRequestKeyTimeout:                  "REQUEST_KEY_TIMEOUT",
+	ConfigCertificateTableSize:               "CERTIFICATE_TABLE_SIZE",
+	ConfigApplicationZDOFlags:                "APPLICATION_ZDO_FLAGS",
+	ConfigBroadcastTableSize:                 "BROADCAST_TABLE_SIZE",
+	ConfigMACFilterTableSize:                 "MAC_FILTER_TABLE_SIZE",
+	ConfigSupportedNetworks:                  "SUPPORTED_NETWORKS",
+	ConfigSendMulticastsToSleepyAddress:      "SEND_MULTICASTS_TO_SLEEPY_ADDRESS",
+	ConfigZLLGroupAddresses:                  "ZLL_GROUP_ADDRESSES",
+	ConfigZLLRSSIThreshold:                   "ZLL_RSSI_THRESHOLD",
+	ConfigMTORRFlowControl:                   "MTORR_FLOW_CONTROL",
+	ConfigRetryQueueSize:                     "RETRY_QUEUE_SIZE",
+	ConfigNewBroadcastEntryThreshold:         "NEW_BROADCAST_ENTRY_THRESHOLD",
+	ConfigTransientKeyTimeoutS:               "TRANSIENT_KEY_TIMEOUT_S",
+	ConfigBroadcastMinACKsNeeded:             "BROADCAST_MIN_ACKS_NEEDED",
+	ConfigTCRejoinsUsingWellKnownKeyTimeoutS: "TC_REJOINS_USING_WELL_KNOWN_KEY_TIMEOUT_S",
+	ConfigCTuneValue:                         "CTUNE_VALUE",
+}
+
+// AllConfigIDs is the list of all known configuration IDs, ordered by value.
+var AllConfigIDs = []EzspConfigID{
+	ConfigPacketBufferCount,
+	ConfigNeighborTableSize,
+	ConfigAPSUnicastMessageCount,
+	ConfigBindingTableSize,
+	ConfigAddressTableSize,
+	ConfigMulticastTableSize,
+	ConfigRouteTableSize,
+	ConfigDiscoveryTableSize,
+	ConfigStackProfile,
+	ConfigSecurityLevel,
+	ConfigMaxHops,
+	ConfigMaxEndDeviceChildren,
+	ConfigIndirectTransmissionTimeout,
+	ConfigEndDevicePollTimeout,
+	ConfigTXPowerMode,
+	ConfigDisableRelay,
+	ConfigTrustCenterAddressCacheSize,
+	ConfigSourceRouteTableSize,
+	ConfigFragmentWindowSize,
+	ConfigFragmentDelayMS,
+	ConfigKeyTableSize,
+	ConfigAPSACKTimeout,
+	ConfigBeaconJitterDuration,
+	ConfigEndDeviceBindTimeout,
+	ConfigPanIDConflictReportThreshold,
+	ConfigRequestKeyTimeout,
+	ConfigCertificateTableSize,
+	ConfigApplicationZDOFlags,
+	ConfigBroadcastTableSize,
+	ConfigMACFilterTableSize,
+	ConfigSupportedNetworks,
+	ConfigSendMulticastsToSleepyAddress,
+	ConfigZLLGroupAddresses,
+	ConfigZLLRSSIThreshold,
+	ConfigMTORRFlowControl,
+	ConfigRetryQueueSize,
+	ConfigNewBroadcastEntryThreshold,
+	ConfigTransientKeyTimeoutS,
+	ConfigBroadcastMinACKsNeeded,
+	ConfigTCRejoinsUsingWellKnownKeyTimeoutS,
+	ConfigCTuneValue,
+}
+
+// String returns the human-readable name for the config ID.
+func (id EzspConfigID) String() string {
+	if name, ok := configNames[id]; ok {
+		return name
+	}
+	return fmt.Sprintf("UNKNOWN_0x%02X", byte(id))
+}
+
+// ParseConfigID parses a config ID from a name (case-insensitive) or hex string (e.g. "0x01").
+func ParseConfigID(s string) (EzspConfigID, error) {
+	// Try hex format first.
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		v, err := strconv.ParseUint(s[2:], 16, 8)
+		if err != nil {
+			return 0, fmt.Errorf("invalid config ID hex %q: %w", s, err)
+		}
+		return EzspConfigID(v), nil
+	}
+
+	// Try decimal.
+	if v, err := strconv.ParseUint(s, 10, 8); err == nil {
+		return EzspConfigID(v), nil
+	}
+
+	// Try name lookup (case-insensitive).
+	upper := strings.ToUpper(s)
+	for id, name := range configNames {
+		if name == upper {
+			return id, nil
+		}
+	}
+
+	return 0, fmt.Errorf("unknown config ID: %q", s)
 }
