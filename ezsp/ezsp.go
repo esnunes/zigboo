@@ -151,15 +151,19 @@ func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]
 		return nil, err
 	}
 
-	// Decode response and extract parameters.
+	// Decode response and validate frame ID matches our request.
+	var respFrameID uint16
 	var respParams []byte
 	if c.extended {
-		_, _, respParams, err = decodeExtended(resp)
+		_, respFrameID, respParams, err = decodeExtended(resp)
 	} else {
-		_, _, respParams, err = decodeLegacy(resp)
+		_, respFrameID, respParams, err = decodeLegacy(resp)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ezsp: decode response: %w", err)
+	}
+	if respFrameID != frameID {
+		return nil, fmt.Errorf("%w: got 0x%04X for command 0x%04X", ErrUnexpectedResponse, respFrameID, frameID)
 	}
 
 	return respParams, nil
