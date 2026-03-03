@@ -5,6 +5,13 @@
 //	zigboo --port /dev/ttyUSB0 reset     # ASH reset handshake
 //	zigboo --port /dev/ttyUSB0 version   # EZSP version negotiation
 //	zigboo --port /dev/ttyUSB0 info      # version + node-id + eui64
+//	zigboo --port /dev/ttyUSB0 network  # network state and parameters
+//	zigboo --port /dev/ttyUSB0 scan --type energy  # energy scan
+//	zigboo --port /dev/ttyUSB0 scan --type active  # active scan
+//	zigboo --port /dev/ttyUSB0 endpoints # list registered endpoints
+//	zigboo --port /dev/ttyUSB0 config list              # dump all config values
+//	zigboo --port /dev/ttyUSB0 config get STACK_PROFILE  # read one config
+//	zigboo --port /dev/ttyUSB0 config set MAX_HOPS 15    # write one config
 //	zigboo -v --port /dev/ttyUSB0 info   # verbose mode with frame dumps
 package main
 
@@ -16,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 
 	"github.com/esnunes/zigboo/ash"
 	"github.com/esnunes/zigboo/ezsp"
@@ -33,6 +41,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  reset     perform ASH reset handshake\n")
 		fmt.Fprintf(os.Stderr, "  version   negotiate EZSP protocol version\n")
 		fmt.Fprintf(os.Stderr, "  info      print version, node ID, and EUI-64\n")
+		fmt.Fprintf(os.Stderr, "  network   show network state and parameters\n")
+		fmt.Fprintf(os.Stderr, "  scan      energy or active channel scan (--type energy|active)\n")
+		fmt.Fprintf(os.Stderr, "  endpoints list registered endpoints and clusters\n")
+		fmt.Fprintf(os.Stderr, "  config    get/set NCP configuration values (list|get|set)\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flag.PrintDefaults()
 	}
@@ -73,6 +85,14 @@ func run(ctx context.Context, portPath string, cmd string) error {
 		return runVersion(ctx, portPath)
 	case "info":
 		return runInfo(ctx, portPath)
+	case "network":
+		return runNetwork(ctx, portPath)
+	case "scan":
+		return runScan(ctx, portPath, flag.Args()[1:])
+	case "endpoints":
+		return runEndpoints(ctx, portPath)
+	case "config":
+		return runConfig(ctx, portPath, flag.Args()[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
@@ -183,4 +203,238 @@ func runInfo(ctx context.Context, portPath string) error {
 	fmt.Printf("  Node ID:       0x%04X\n", nodeID)
 	fmt.Printf("  EUI-64:        %s\n", ezsp.FormatEUI64(eui64))
 	return nil
+}
+
+func runNetwork(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	state, err := client.NetworkState(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	fmt.Printf("Network state: %s\n", state)
+
+	if state == ezsp.NetworkStatusNoNetwork {
+		return nil
+	}
+
+	nodeType, params, err := client.GetNetworkParameters(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+
+	fmt.Printf("  PAN ID:        0x%04X\n", params.PanID)
+	fmt.Printf("  Extended PAN:  %s\n", ezsp.FormatEUI64(params.ExtendedPanID))
+	fmt.Printf("  Channel:       %d\n", params.RadioChannel)
+	fmt.Printf("  TX power:      %d dBm\n", params.RadioTxPower)
+	fmt.Printf("  Node type:     %s\n", nodeType)
+	return nil
+}
+
+func runScan(ctx context.Context, portPath string, args []string) error {
+	scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
+	scanType := scanFlags.String("type", "energy", "scan type: energy or active")
+	if err := scanFlags.Parse(args); err != nil {
+		return err
+	}
+
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+
+	switch *scanType {
+	case "energy":
+		results, errCh, err := client.StartEnergyScan(ctx, ezsp.DefaultChannelMask, 3)
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		fmt.Printf("Channel  RSSI\n")
+		for r := range results {
+			fmt.Printf("  %5d  %d dBm\n", r.Channel, r.MaxRSSI)
+		}
+		if err := <-errCh; err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+	case "active":
+		results, errCh, err := client.StartActiveScan(ctx, ezsp.DefaultChannelMask, 3)
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+		fmt.Printf("Channel  PAN ID  Extended PAN ID                 Join  Profile  LQI  RSSI\n")
+		for r := range results {
+			fmt.Printf("  %5d  0x%04X  %s  %5t  %7d  %3d  %d dBm\n",
+				r.Channel, r.PanID, ezsp.FormatEUI64(r.ExtendedPanID),
+				r.AllowingJoin, r.StackProfile, r.LQI, r.RSSI)
+		}
+		if err := <-errCh; err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+	default:
+		return fmt.Errorf("scan: unknown type %q (use energy or active)", *scanType)
+	}
+	return nil
+}
+
+func runEndpoints(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("endpoints: %w", err)
+	}
+
+	count, err := client.GetEndpointCount(ctx)
+	if err != nil {
+		return fmt.Errorf("endpoints: %w\n  (your NCP firmware may not support the endpoint query commands)", err)
+	}
+
+	fmt.Printf("Endpoints: %d\n", count)
+	if count == 0 {
+		return nil
+	}
+
+	for i := uint8(0); i < count; i++ {
+		ep, err := client.GetEndpoint(ctx, i)
+		if err != nil {
+			fmt.Printf("\n  error reading endpoint at index %d: %v\n", i, err)
+			continue
+		}
+
+		desc, err := client.GetEndpointDescription(ctx, ep)
+		if err != nil {
+			fmt.Printf("\nEndpoint %d\n", ep)
+			fmt.Printf("  error reading description: %v\n", err)
+			continue
+		}
+
+		fmt.Printf("\nEndpoint %d\n", ep)
+		fmt.Printf("  Profile:    0x%04X\n", desc.ProfileID)
+		fmt.Printf("  Device ID:  0x%04X\n", desc.DeviceID)
+		fmt.Printf("  Version:    %d\n", desc.DeviceVersion)
+
+		if desc.InputClusterCount > 0 {
+			fmt.Printf("  In clusters: ")
+			for j := uint8(0); j < desc.InputClusterCount; j++ {
+				cluster, err := client.GetEndpointCluster(ctx, ep, 0, j)
+				if err != nil {
+					fmt.Printf(" error: %v", err)
+					break
+				}
+				if j > 0 {
+					fmt.Printf(", ")
+				}
+				fmt.Printf("0x%04X", cluster)
+			}
+			fmt.Printf("\n")
+		} else {
+			fmt.Printf("  In clusters:  (none)\n")
+		}
+
+		if desc.OutputClusterCount > 0 {
+			fmt.Printf("  Out clusters: ")
+			for j := uint8(0); j < desc.OutputClusterCount; j++ {
+				cluster, err := client.GetEndpointCluster(ctx, ep, 1, j)
+				if err != nil {
+					fmt.Printf(" error: %v", err)
+					break
+				}
+				if j > 0 {
+					fmt.Printf(", ")
+				}
+				fmt.Printf("0x%04X", cluster)
+			}
+			fmt.Printf("\n")
+		} else {
+			fmt.Printf("  Out clusters: (none)\n")
+		}
+	}
+	return nil
+}
+
+func runConfig(ctx context.Context, portPath string, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("config: subcommand required (list, get, set)")
+	}
+	sub := args[0]
+
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
+	switch sub {
+	case "list":
+		for _, id := range ezsp.AllConfigIDs {
+			val, err := client.GetConfigurationValue(ctx, id)
+			if err != nil {
+				fmt.Printf("%-42s (0x%02X): unsupported\n", id, uint8(id))
+				continue
+			}
+			fmt.Printf("%-42s (0x%02X): %d\n", id, uint8(id), val)
+		}
+		return nil
+
+	case "get":
+		if len(args) < 2 {
+			return fmt.Errorf("config get: name or hex ID required")
+		}
+		id, err := ezsp.ParseConfigID(args[1])
+		if err != nil {
+			return fmt.Errorf("config get: %w", err)
+		}
+		val, err := client.GetConfigurationValue(ctx, id)
+		if err != nil {
+			return fmt.Errorf("config get: %w", err)
+		}
+		fmt.Printf("%s (0x%02X): %d\n", id, uint8(id), val)
+		return nil
+
+	case "set":
+		if len(args) < 3 {
+			return fmt.Errorf("config set: name/hex ID and value required")
+		}
+		id, err := ezsp.ParseConfigID(args[1])
+		if err != nil {
+			return fmt.Errorf("config set: %w", err)
+		}
+		v, err := strconv.ParseUint(args[2], 0, 16)
+		if err != nil {
+			return fmt.Errorf("config set: invalid value %q: %w", args[2], err)
+		}
+		if err := client.SetConfigurationValue(ctx, id, uint16(v)); err != nil {
+			return fmt.Errorf("config set: %w", err)
+		}
+		fmt.Printf("%s (0x%02X): set to %d\n", id, uint8(id), v)
+		return nil
+
+	default:
+		return fmt.Errorf("config: unknown subcommand %q (use list, get, or set)", sub)
+	}
 }

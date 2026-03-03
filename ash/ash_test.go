@@ -179,6 +179,172 @@ func TestResetContextCancelled(t *testing.T) {
 	}
 }
 
+func TestRecvDataFrame(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+	t.Cleanup(func() { conn.Close() })
+
+	// Inject a DATA frame with frmNum=0, ackNum=0, payload = [0xAA, 0xBB].
+	control := dataControlByte(0, 0, false)
+	frame := encodeDataFrame(control, []byte{0xAA, 0xBB})
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		mp.injectFrame(frame)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	payload, err := conn.Recv(ctx)
+	if err != nil {
+		t.Fatalf("Recv() error = %v", err)
+	}
+	if !bytes.Equal(payload, []byte{0xAA, 0xBB}) {
+		t.Errorf("payload = %x, want aabb", payload)
+	}
+
+	// Verify ACK was sent (ackNum should be 1 = (frmNum+1)&0x07).
+	if conn.ackNum != 1 {
+		t.Errorf("ackNum = %d, want 1", conn.ackNum)
+	}
+
+	// Verify frmNum was NOT advanced.
+	if conn.frmNum != 0 {
+		t.Errorf("frmNum = %d, want 0 (should not be advanced by Recv)", conn.frmNum)
+	}
+
+	// Verify ACK frame was written.
+	written := mp.writeBuf.Bytes()
+	if len(written) == 0 {
+		t.Fatal("expected ACK frame to be written")
+	}
+}
+
+func TestRecvSkipsACK(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+	t.Cleanup(func() { conn.Close() })
+
+	// Inject an ACK frame followed by a DATA frame.
+	// The ACK should be skipped, and Recv should return the DATA payload.
+	ackFrame := encodeACK(0)
+	control := dataControlByte(0, 0, false)
+	dataFrame := encodeDataFrame(control, []byte{0xCC})
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		mp.injectFrame(ackFrame)
+		time.Sleep(10 * time.Millisecond)
+		mp.injectFrame(dataFrame)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	payload, err := conn.Recv(ctx)
+	if err != nil {
+		t.Fatalf("Recv() error = %v", err)
+	}
+	if !bytes.Equal(payload, []byte{0xCC}) {
+		t.Errorf("payload = %x, want cc", payload)
+	}
+}
+
+func TestRecvRSTACK(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+	t.Cleanup(func() { conn.Close() })
+
+	// Inject a RSTACK frame — Recv should return ErrConnectionReset.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		mp.injectFrame(buildRSTACKFrame(0x0B, 0x01))
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := conn.Recv(ctx)
+	if err != ErrConnectionReset {
+		t.Fatalf("Recv() error = %v, want ErrConnectionReset", err)
+	}
+}
+
+func TestRecvContextCancelled(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+	t.Cleanup(func() { conn.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately.
+
+	_, err := conn.Recv(ctx)
+	if err == nil {
+		t.Fatal("Recv() expected error on cancelled context")
+	}
+	if err != context.Canceled {
+		t.Fatalf("Recv() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRecvReaderClosed(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+
+	// Close the connection to close the frames channel.
+	conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := conn.Recv(ctx)
+	if err == nil {
+		t.Fatal("Recv() expected error when reader is closed")
+	}
+}
+
+func TestRecvMultipleDataFrames(t *testing.T) {
+	mp := newMockPort()
+	conn := New(mp)
+	t.Cleanup(func() { conn.Close() })
+
+	// Simulate a scan scenario: inject 3 consecutive DATA frames.
+	// Each has increasing frmNum.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		for i := range 3 {
+			control := dataControlByte(byte(i), 0, false)
+			frame := encodeDataFrame(control, []byte{byte(0x10 + i)})
+			mp.injectFrame(frame)
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	for i := range 3 {
+		payload, err := conn.Recv(ctx)
+		if err != nil {
+			t.Fatalf("Recv() #%d error = %v", i, err)
+		}
+		want := []byte{byte(0x10 + i)}
+		if !bytes.Equal(payload, want) {
+			t.Errorf("Recv() #%d = %x, want %x", i, payload, want)
+		}
+	}
+
+	// After 3 frames with frmNum 0,1,2, ackNum should be 3.
+	if conn.ackNum != 3 {
+		t.Errorf("ackNum = %d, want 3", conn.ackNum)
+	}
+
+	// frmNum should still be 0 — Recv never advances it.
+	if conn.frmNum != 0 {
+		t.Errorf("frmNum = %d, want 0", conn.frmNum)
+	}
+}
+
 func TestConnClose(t *testing.T) {
 	mp := newMockPort()
 	conn := New(mp)

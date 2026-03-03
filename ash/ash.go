@@ -255,6 +255,66 @@ func (c *Conn) waitForResponse(ctx context.Context) ([]byte, error) {
 	}
 }
 
+// Recv receives the next unsolicited DATA frame from the NCP.
+//
+// It reads frames from the internal channel, sends an ACK for each received
+// DATA frame, and returns the payload. Standalone ACK and NAK frames are
+// silently skipped (they have no meaning when the host is not sending).
+// Returns ErrConnectionReset if a RSTACK frame is received.
+//
+// Unlike Send/waitForResponse, Recv does NOT advance frmNum because the host
+// is not sending an outgoing DATA frame. Only ackNum is advanced to acknowledge
+// the NCP's frame.
+//
+// The caller controls timeouts via ctx. There is no internal timer.
+func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case raw, ok := <-c.frames:
+			if !ok {
+				return nil, fmt.Errorf("ash: recv: reader closed")
+			}
+
+			control, payload, err := decodeFrame(raw)
+			if err != nil {
+				slog.Debug("ash: recv: decode error, ignoring", "err", err)
+				continue
+			}
+
+			switch frameType(control) {
+			case frameTypeACK, frameTypeNAK:
+				// No outgoing frame to ACK/NAK — skip.
+				slog.Debug("ash: recv: ignoring standalone ACK/NAK",
+					"control", fmt.Sprintf("0x%02X", control))
+				continue
+
+			case frameTypeDATA:
+				frmNum, _, _ := parseDataControl(control)
+
+				// Send ACK for this frame.
+				nextAck := (frmNum + 1) & 0x07
+				c.ackNum = nextAck
+				ackFrame := encodeACK(nextAck)
+				if _, err := c.port.Write(ackFrame); err != nil {
+					slog.Warn("ash: recv: send ACK failed", "err", err)
+				}
+				// NOTE: frmNum is NOT advanced — no outgoing frame was sent.
+
+				return payload, nil
+
+			case frameTypeRSTACK:
+				return nil, ErrConnectionReset
+
+			default:
+				slog.Debug("ash: recv: unexpected frame",
+					"control", fmt.Sprintf("0x%02X", control))
+			}
+		}
+	}
+}
+
 // reader reads bytes from the serial port and assembles complete frames.
 // Frames are delimited by 0x7E flag bytes. Complete frames are sent on the
 // frames channel after unstuffing and de-randomization.

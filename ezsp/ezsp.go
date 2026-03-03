@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/esnunes/zigboo/ash"
@@ -28,6 +29,9 @@ var (
 
 	// ErrCommandTimeout indicates no EZSP response was received within the timeout.
 	ErrCommandTimeout = errors.New("ezsp: command timeout")
+
+	// ErrScanInProgress is returned when a command is issued while a scan is running.
+	ErrScanInProgress = errors.New("ezsp: scan in progress")
 )
 
 const (
@@ -56,6 +60,8 @@ type Client struct {
 	seq      byte // monotonically increasing sequence number
 	extended bool // true if using extended frame format (v9+)
 	version  byte // negotiated protocol version
+	mu       sync.Mutex
+	scanning bool // true while a scan is in progress
 }
 
 // New creates a new EZSP client over the given ASH connection.
@@ -124,7 +130,15 @@ func (c *Client) NegotiateVersion(ctx context.Context) (VersionInfo, error) {
 
 // Command sends an EZSP command and returns the response parameters.
 // The frame is automatically encoded in the correct format (legacy or extended).
+// Returns ErrScanInProgress if a scan is currently running.
 func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]byte, error) {
+	c.mu.Lock()
+	if c.scanning {
+		c.mu.Unlock()
+		return nil, ErrScanInProgress
+	}
+	c.mu.Unlock()
+
 	var frame []byte
 	if c.extended {
 		frame = encodeExtended(c.nextSeq(), frameID, params)
@@ -137,15 +151,19 @@ func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]
 		return nil, err
 	}
 
-	// Decode response and extract parameters.
+	// Decode response and validate frame ID matches our request.
+	var respFrameID uint16
 	var respParams []byte
 	if c.extended {
-		_, _, respParams, err = decodeExtended(resp)
+		_, respFrameID, respParams, err = decodeExtended(resp)
 	} else {
-		_, _, respParams, err = decodeLegacy(resp)
+		_, respFrameID, respParams, err = decodeLegacy(resp)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ezsp: decode response: %w", err)
+	}
+	if respFrameID != frameID {
+		return nil, fmt.Errorf("%w: got 0x%04X for command 0x%04X", ErrUnexpectedResponse, respFrameID, frameID)
 	}
 
 	return respParams, nil
@@ -182,6 +200,322 @@ func (c *Client) GetEUI64(ctx context.Context) ([8]byte, error) {
 func FormatEUI64(eui [8]byte) string {
 	return fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
 		eui[7], eui[6], eui[5], eui[4], eui[3], eui[2], eui[1], eui[0])
+}
+
+// NetworkState returns the current network state of the NCP.
+func (c *Client) NetworkState(ctx context.Context) (EmberNetworkStatus, error) {
+	resp, err := c.Command(ctx, frameIDNetworkState, nil)
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: networkState: %w", err)
+	}
+	if len(resp) < 1 {
+		return 0, fmt.Errorf("ezsp: networkState: response too short (%d bytes)", len(resp))
+	}
+	return EmberNetworkStatus(resp[0]), nil
+}
+
+// GetNetworkParameters returns the current network parameters and node type.
+// Returns an error if the NCP is not joined to a network (EmberStatus != success).
+func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, NetworkParameters, error) {
+	resp, err := c.Command(ctx, frameIDGetNetworkParameters, nil)
+	if err != nil {
+		return 0, NetworkParameters{}, fmt.Errorf("ezsp: getNetworkParameters: %w", err)
+	}
+	// Response: EmberStatus(1) + EmberNodeType(1) + ExtendedPanID(8) + PanID(2) + TxPower(1) + Channel(1) = 14
+	if len(resp) < 14 {
+		return 0, NetworkParameters{}, fmt.Errorf("ezsp: getNetworkParameters: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 { // EmberStatus success
+		return 0, NetworkParameters{}, fmt.Errorf("ezsp: getNetworkParameters: ember status 0x%02X", resp[0])
+	}
+	nodeType := EmberNodeType(resp[1])
+	var params NetworkParameters
+	copy(params.ExtendedPanID[:], resp[2:10])
+	params.PanID = binary.LittleEndian.Uint16(resp[10:12])
+	params.RadioTxPower = int8(resp[12])
+	params.RadioChannel = resp[13]
+	return nodeType, params, nil
+}
+
+// GetConfigurationValue reads a configuration value from the NCP.
+func (c *Client) GetConfigurationValue(ctx context.Context, id EzspConfigID) (uint16, error) {
+	resp, err := c.Command(ctx, frameIDGetConfigurationValue, []byte{byte(id)})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: %w", err)
+	}
+	if len(resp) < 3 {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: EZSP status 0x%02X", resp[0])
+	}
+	return binary.LittleEndian.Uint16(resp[1:3]), nil
+}
+
+// SetConfigurationValue writes a configuration value on the NCP.
+func (c *Client) SetConfigurationValue(ctx context.Context, id EzspConfigID, value uint16) error {
+	params := make([]byte, 3)
+	params[0] = byte(id)
+	binary.LittleEndian.PutUint16(params[1:3], value)
+
+	resp, err := c.Command(ctx, frameIDSetConfigurationValue, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: setConfigurationValue: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: setConfigurationValue: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: setConfigurationValue: EZSP status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// GetEndpointCount returns the number of configured endpoints on the NCP.
+// Zigbee endpoint numbers are 1–240, so a count above 240 is treated as invalid.
+func (c *Client) GetEndpointCount(ctx context.Context) (uint8, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointCount, nil)
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: %w", err)
+	}
+	if len(resp) < 1 {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: response too short (%d bytes)", len(resp))
+	}
+	count := resp[0]
+	if count > 240 {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: count %d exceeds maximum (240)", count)
+	}
+	return count, nil
+}
+
+// GetEndpoint returns the endpoint number at the given index.
+func (c *Client) GetEndpoint(ctx context.Context, index uint8) (uint8, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpoint, []byte{index})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpoint: %w", err)
+	}
+	if len(resp) < 1 {
+		return 0, fmt.Errorf("ezsp: getEndpoint: response too short (%d bytes)", len(resp))
+	}
+	return resp[0], nil
+}
+
+// GetEndpointDescription returns the description of the given endpoint.
+// The response contains EzspStatus(1) + profileId(2 LE) + deviceId(2 LE) +
+// deviceVersion(1) + inputClusterCount(1) + outputClusterCount(1) = 8 bytes.
+func (c *Client) GetEndpointDescription(ctx context.Context, endpoint uint8) (EndpointDescription, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointDescription, []byte{endpoint})
+	if err != nil {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: %w", err)
+	}
+	if len(resp) < 8 {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: EZSP status 0x%02X", resp[0])
+	}
+	return EndpointDescription{
+		ProfileID:          binary.LittleEndian.Uint16(resp[1:3]),
+		DeviceID:           binary.LittleEndian.Uint16(resp[3:5]),
+		DeviceVersion:      resp[5],
+		InputClusterCount:  resp[6],
+		OutputClusterCount: resp[7],
+	}, nil
+}
+
+// GetEndpointCluster returns a cluster ID from an endpoint's cluster list.
+// listID 0 = input (server) clusters, listID 1 = output (client) clusters.
+func (c *Client) GetEndpointCluster(ctx context.Context, endpoint, listID, listIndex uint8) (uint16, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointCluster, []byte{endpoint, listID, listIndex})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpointCluster: %w", err)
+	}
+	if len(resp) < 2 {
+		return 0, fmt.Errorf("ezsp: getEndpointCluster: response too short (%d bytes)", len(resp))
+	}
+	return binary.LittleEndian.Uint16(resp[:2]), nil
+}
+
+// StartEnergyScan initiates an energy scan and returns a channel of results.
+//
+// It blocks until the NCP confirms the scan has started. On success, it spawns
+// a goroutine that reads energy scan results and sends them on the returned
+// channel. The result channel (buffered, cap 16) is closed when
+// scanCompleteHandler arrives. The error channel (buffered, cap 1) receives
+// the scan completion status (nil on success) and is then closed.
+//
+// No other EZSP commands may be issued while a scan is in progress.
+// Command() will return ErrScanInProgress.
+func (c *Client) StartEnergyScan(ctx context.Context, channelMask uint32, duration uint8) (<-chan EnergyScanResult, <-chan error, error) {
+	if err := c.startScan(ctx, ScanTypeEnergy, channelMask, duration); err != nil {
+		return nil, nil, err
+	}
+
+	c.mu.Lock()
+	c.scanning = true
+	c.mu.Unlock()
+
+	results := make(chan EnergyScanResult, 16)
+	errCh := make(chan error, 1)
+
+	go c.runEnergyScan(ctx, results, errCh)
+
+	return results, errCh, nil
+}
+
+// StartActiveScan initiates an active scan and returns a channel of results.
+//
+// Same contract as StartEnergyScan but returns NetworkScanResult for each
+// discovered network.
+func (c *Client) StartActiveScan(ctx context.Context, channelMask uint32, duration uint8) (<-chan NetworkScanResult, <-chan error, error) {
+	if err := c.startScan(ctx, ScanTypeActive, channelMask, duration); err != nil {
+		return nil, nil, err
+	}
+
+	c.mu.Lock()
+	c.scanning = true
+	c.mu.Unlock()
+
+	results := make(chan NetworkScanResult, 16)
+	errCh := make(chan error, 1)
+
+	go c.runActiveScan(ctx, results, errCh)
+
+	return results, errCh, nil
+}
+
+// startScan sends the startScan EZSP command and validates the response.
+func (c *Client) startScan(ctx context.Context, scanType EzspNetworkScanType, channelMask uint32, duration uint8) error {
+	params := make([]byte, 6)
+	params[0] = byte(scanType)
+	binary.LittleEndian.PutUint32(params[1:5], channelMask)
+	params[5] = duration
+
+	resp, err := c.Command(ctx, frameIDStartScan, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: startScan: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: startScan: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: startScan: ember status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// runEnergyScan reads energy scan callbacks until scanCompleteHandler.
+func (c *Client) runEnergyScan(ctx context.Context, results chan<- EnergyScanResult, errCh chan<- error) {
+	defer func() {
+		close(results)
+		close(errCh)
+		c.mu.Lock()
+		c.scanning = false
+		c.mu.Unlock()
+	}()
+
+	for {
+		raw, err := c.conn.Recv(ctx)
+		if err != nil {
+			errCh <- fmt.Errorf("ezsp: energyScan: recv: %w", err)
+			return
+		}
+
+		frameID, params, err := c.decodeCallback(raw)
+		if err != nil {
+			slog.Debug("ezsp: energyScan: decode error, ignoring", "err", err)
+			continue
+		}
+
+		switch frameID {
+		case frameIDEnergyScanResultHandler:
+			if len(params) < 2 {
+				slog.Debug("ezsp: energyScan: result too short", "len", len(params))
+				continue
+			}
+			results <- EnergyScanResult{
+				Channel: params[0],
+				MaxRSSI: int8(params[1]),
+			}
+
+		case frameIDScanCompleteHandler:
+			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
+				errCh <- fmt.Errorf("ezsp: energyScan: complete with status 0x%02X", params[1])
+			}
+			return
+
+		default:
+			slog.Debug("ezsp: energyScan: unexpected callback",
+				"frameID", fmt.Sprintf("0x%04X", frameID))
+		}
+	}
+}
+
+// runActiveScan reads active scan callbacks until scanCompleteHandler.
+func (c *Client) runActiveScan(ctx context.Context, results chan<- NetworkScanResult, errCh chan<- error) {
+	defer func() {
+		close(results)
+		close(errCh)
+		c.mu.Lock()
+		c.scanning = false
+		c.mu.Unlock()
+	}()
+
+	for {
+		raw, err := c.conn.Recv(ctx)
+		if err != nil {
+			errCh <- fmt.Errorf("ezsp: activeScan: recv: %w", err)
+			return
+		}
+
+		frameID, params, err := c.decodeCallback(raw)
+		if err != nil {
+			slog.Debug("ezsp: activeScan: decode error, ignoring", "err", err)
+			continue
+		}
+
+		switch frameID {
+		case frameIDNetworkFoundHandler:
+			// EmberZigbeeNetwork: channel(1) + panId(2) + extPanId(8) +
+			//   allowingJoin(1) + stackProfile(1) + nwkUpdateId(1) = 14
+			// Then: lastHopLqi(1) + lastHopRssi(1) = 2
+			// Total: 16 bytes
+			if len(params) < 16 {
+				slog.Debug("ezsp: activeScan: result too short", "len", len(params))
+				continue
+			}
+			var r NetworkScanResult
+			r.Channel = params[0]
+			r.PanID = binary.LittleEndian.Uint16(params[1:3])
+			copy(r.ExtendedPanID[:], params[3:11])
+			r.AllowingJoin = params[11] != 0
+			r.StackProfile = params[12]
+			r.NwkUpdateID = params[13]
+			r.LQI = params[14]
+			r.RSSI = int8(params[15])
+			results <- r
+
+		case frameIDScanCompleteHandler:
+			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
+				errCh <- fmt.Errorf("ezsp: activeScan: complete with status 0x%02X", params[1])
+			}
+			return
+
+		default:
+			slog.Debug("ezsp: activeScan: unexpected callback",
+				"frameID", fmt.Sprintf("0x%04X", frameID))
+		}
+	}
+}
+
+// decodeCallback decodes an EZSP callback frame and returns the frame ID and parameters.
+func (c *Client) decodeCallback(raw []byte) (frameID uint16, params []byte, err error) {
+	if c.extended {
+		_, frameID, params, err = decodeExtended(raw)
+	} else {
+		_, frameID, params, err = decodeLegacy(raw)
+	}
+	return
 }
 
 // sendRaw sends raw EZSP frame bytes over ASH and returns the raw response.
