@@ -662,6 +662,34 @@ func TestStartActiveScan_ZeroResults(t *testing.T) {
 	}
 }
 
+func TestStartActiveScan_NoBeaconsStatus(t *testing.T) {
+	// EMBER_NO_BEACONS (0x36) is the normal completion status for active scans
+	// when the NCP finishes scanning with no more beacons to report.
+	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{26, emberNoBeacons})
+
+	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		injectCallbacks(mp, [][]byte{cbDone}, 1)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results, errCh, err := client.StartActiveScan(ctx, DefaultChannelMask, 3)
+	if err != nil {
+		t.Fatalf("StartActiveScan() error = %v", err)
+	}
+
+	for range results {
+	}
+	if scanErr := <-errCh; scanErr != nil {
+		t.Fatalf("EMBER_NO_BEACONS (0x36) should not be an error, got: %v", scanErr)
+	}
+}
+
 func TestScanExclusivity(t *testing.T) {
 	// Start a scan, verify Command() returns ErrScanInProgress.
 	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})

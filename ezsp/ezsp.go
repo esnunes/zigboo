@@ -336,7 +336,7 @@ func (c *Client) runEnergyScan(ctx context.Context, results chan<- EnergyScanRes
 			}
 
 		case frameIDScanCompleteHandler:
-			if len(params) >= 2 && params[1] != 0x00 {
+			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
 				errCh <- fmt.Errorf("ezsp: energyScan: complete with status 0x%02X", params[1])
 			}
 			return
@@ -393,7 +393,7 @@ func (c *Client) runActiveScan(ctx context.Context, results chan<- NetworkScanRe
 			results <- r
 
 		case frameIDScanCompleteHandler:
-			if len(params) >= 2 && params[1] != 0x00 {
+			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
 				errCh <- fmt.Errorf("ezsp: activeScan: complete with status 0x%02X", params[1])
 			}
 			return

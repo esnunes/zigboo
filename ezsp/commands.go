@@ -1,5 +1,15 @@
 package ezsp
 
+// EmberStatus values used by scan completion.
+const (
+	// emberSuccess indicates the operation completed successfully.
+	emberSuccess = 0x00
+
+	// emberNoBeacons indicates an active scan completed with no beacons found
+	// on the last channel. This is the normal completion status for active scans.
+	emberNoBeacons = 0x36
+)
+
 // EZSP command frame IDs.
 const (
 	// frameIDVersion is the EZSP version negotiation command (0x0000).
