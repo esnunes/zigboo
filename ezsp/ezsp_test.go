@@ -447,7 +447,7 @@ func TestGetNetworkParameters_ResponseTooShort(t *testing.T) {
 // --- Endpoint tests ---
 
 func TestGetEndpointCount(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{2})
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 2})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -463,7 +463,7 @@ func TestGetEndpointCount(t *testing.T) {
 }
 
 func TestGetEndpointCount_Zero(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0})
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -479,7 +479,7 @@ func TestGetEndpointCount_Zero(t *testing.T) {
 }
 
 func TestGetEndpointCount_Max(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{240})
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 240})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -494,9 +494,23 @@ func TestGetEndpointCount_Max(t *testing.T) {
 	}
 }
 
+func TestGetEndpointCount_EzspStatusError(t *testing.T) {
+	// EzspStatus=0xB5 (EMBER_INVALID_CALL) — NCP returns only the status byte.
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0xB5})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetEndpointCount(ctx)
+	if err == nil {
+		t.Fatal("expected error for non-zero EZSP status")
+	}
+}
+
 func TestGetEndpointCount_Bogus(t *testing.T) {
-	// 0xFF is above 240 — should be rejected as bogus.
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0xFF})
+	// Count above 240 — should be rejected as bogus.
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0xFF})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -510,8 +524,8 @@ func TestGetEndpointCount_Bogus(t *testing.T) {
 
 func TestGetEndpoint(t *testing.T) {
 	// Index 0 → endpoint 1, index 1 → endpoint 242.
-	resp0 := encodeExtended(0, frameIDGetEndpoint, []byte{1})
-	resp1 := encodeExtended(0, frameIDGetEndpoint, []byte{242})
+	resp0 := encodeExtended(0, frameIDGetEndpoint, []byte{0x00, 1})
+	resp1 := encodeExtended(0, frameIDGetEndpoint, []byte{0x00, 242})
 	client, _, _ := setupMockNCP(t, [][]byte{resp0, resp1})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -604,7 +618,7 @@ func TestGetEndpointDescription_ResponseTooShort(t *testing.T) {
 
 func TestGetEndpointCluster(t *testing.T) {
 	// Input cluster at index 0 → cluster ID 0x0006 (On/Off).
-	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x06, 0x00})
+	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x06, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -621,7 +635,7 @@ func TestGetEndpointCluster(t *testing.T) {
 
 func TestGetEndpointCluster_OutputList(t *testing.T) {
 	// Output cluster at index 0 → cluster ID 0x000A (Time).
-	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x0A, 0x00})
+	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x0A, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
