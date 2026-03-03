@@ -237,7 +237,42 @@ func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, Netwo
 	return nodeType, params, nil
 }
 
+// GetConfigurationValue reads a configuration value from the NCP.
+func (c *Client) GetConfigurationValue(ctx context.Context, id EzspConfigID) (uint16, error) {
+	resp, err := c.Command(ctx, frameIDGetConfigurationValue, []byte{byte(id)})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: %w", err)
+	}
+	if len(resp) < 3 {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return 0, fmt.Errorf("ezsp: getConfigurationValue: EZSP status 0x%02X", resp[0])
+	}
+	return binary.LittleEndian.Uint16(resp[1:3]), nil
+}
+
+// SetConfigurationValue writes a configuration value on the NCP.
+func (c *Client) SetConfigurationValue(ctx context.Context, id EzspConfigID, value uint16) error {
+	params := make([]byte, 3)
+	params[0] = byte(id)
+	binary.LittleEndian.PutUint16(params[1:3], value)
+
+	resp, err := c.Command(ctx, frameIDSetConfigurationValue, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: setConfigurationValue: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: setConfigurationValue: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: setConfigurationValue: EZSP status 0x%02X", resp[0])
+	}
+	return nil
+}
+
 // GetEndpointCount returns the number of configured endpoints on the NCP.
+// Zigbee endpoint numbers are 1–240, so a count above 240 is treated as invalid.
 func (c *Client) GetEndpointCount(ctx context.Context) (uint8, error) {
 	resp, err := c.Command(ctx, frameIDGetEndpointCount, nil)
 	if err != nil {
@@ -246,7 +281,11 @@ func (c *Client) GetEndpointCount(ctx context.Context) (uint8, error) {
 	if len(resp) < 1 {
 		return 0, fmt.Errorf("ezsp: getEndpointCount: response too short (%d bytes)", len(resp))
 	}
-	return resp[0], nil
+	count := resp[0]
+	if count > 240 {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: count %d exceeds maximum (240)", count)
+	}
+	return count, nil
 }
 
 // GetEndpoint returns the endpoint number at the given index.
@@ -262,22 +301,25 @@ func (c *Client) GetEndpoint(ctx context.Context, index uint8) (uint8, error) {
 }
 
 // GetEndpointDescription returns the description of the given endpoint.
-// The response contains profileId(2 LE) + deviceId(2 LE) + deviceVersion(1) +
-// inputClusterCount(1) + outputClusterCount(1) = 7 bytes.
+// The response contains EzspStatus(1) + profileId(2 LE) + deviceId(2 LE) +
+// deviceVersion(1) + inputClusterCount(1) + outputClusterCount(1) = 8 bytes.
 func (c *Client) GetEndpointDescription(ctx context.Context, endpoint uint8) (EndpointDescription, error) {
 	resp, err := c.Command(ctx, frameIDGetEndpointDescription, []byte{endpoint})
 	if err != nil {
 		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: %w", err)
 	}
-	if len(resp) < 7 {
+	if len(resp) < 8 {
 		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: response too short (%d bytes)", len(resp))
 	}
+	if resp[0] != 0x00 {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: EZSP status 0x%02X", resp[0])
+	}
 	return EndpointDescription{
-		ProfileID:          binary.LittleEndian.Uint16(resp[0:2]),
-		DeviceID:           binary.LittleEndian.Uint16(resp[2:4]),
-		DeviceVersion:      resp[4],
-		InputClusterCount:  resp[5],
-		OutputClusterCount: resp[6],
+		ProfileID:          binary.LittleEndian.Uint16(resp[1:3]),
+		DeviceID:           binary.LittleEndian.Uint16(resp[3:5]),
+		DeviceVersion:      resp[5],
+		InputClusterCount:  resp[6],
+		OutputClusterCount: resp[7],
 	}, nil
 }
 

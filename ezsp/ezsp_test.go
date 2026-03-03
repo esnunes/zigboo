@@ -478,6 +478,36 @@ func TestGetEndpointCount_Zero(t *testing.T) {
 	}
 }
 
+func TestGetEndpointCount_Max(t *testing.T) {
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{240})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	count, err := client.GetEndpointCount(ctx)
+	if err != nil {
+		t.Fatalf("GetEndpointCount() error = %v", err)
+	}
+	if count != 240 {
+		t.Errorf("GetEndpointCount() = %d, want 240", count)
+	}
+}
+
+func TestGetEndpointCount_Bogus(t *testing.T) {
+	// 0xFF is above 240 — should be rejected as bogus.
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0xFF})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetEndpointCount(ctx)
+	if err == nil {
+		t.Fatal("expected error for bogus endpoint count 255")
+	}
+}
+
 func TestGetEndpoint(t *testing.T) {
 	// Index 0 → endpoint 1, index 1 → endpoint 242.
 	resp0 := encodeExtended(0, frameIDGetEndpoint, []byte{1})
@@ -505,9 +535,10 @@ func TestGetEndpoint(t *testing.T) {
 }
 
 func TestGetEndpointDescription(t *testing.T) {
-	// Response: profileId=0x0104(HA), deviceId=0x0005, deviceVersion=1,
-	// inputClusterCount=3, outputClusterCount=1.
+	// Response: EzspStatus=0x00(success), profileId=0x0104(HA), deviceId=0x0005,
+	// deviceVersion=1, inputClusterCount=3, outputClusterCount=1.
 	params := []byte{
+		0x00,       // EzspStatus success
 		0x04, 0x01, // profileId LE
 		0x05, 0x00, // deviceId LE
 		0x01,       // deviceVersion
@@ -541,9 +572,25 @@ func TestGetEndpointDescription(t *testing.T) {
 	}
 }
 
+func TestGetEndpointDescription_EzspStatusError(t *testing.T) {
+	// EzspStatus=0x02 (EMBER_INVALID_CALL) — NCP doesn't support this command.
+	params := make([]byte, 8)
+	params[0] = 0x02
+	resp := encodeExtended(0, frameIDGetEndpointDescription, params)
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetEndpointDescription(ctx, 1)
+	if err == nil {
+		t.Fatal("expected error for non-zero EZSP status")
+	}
+}
+
 func TestGetEndpointDescription_ResponseTooShort(t *testing.T) {
-	// Only 4 bytes — too short for the 7-byte response.
-	resp := encodeExtended(0, frameIDGetEndpointDescription, []byte{0x04, 0x01, 0x05, 0x00})
+	// Only 5 bytes — too short for the 8-byte response.
+	resp := encodeExtended(0, frameIDGetEndpointDescription, []byte{0x00, 0x04, 0x01, 0x05, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -586,6 +633,81 @@ func TestGetEndpointCluster_OutputList(t *testing.T) {
 	}
 	if cluster != 0x000A {
 		t.Errorf("GetEndpointCluster() = 0x%04X, want 0x000A", cluster)
+	}
+}
+
+// --- Configuration value tests ---
+
+func TestGetConfigurationValue(t *testing.T) {
+	// Response: EzspStatus=0x00 (success), value=255 (0x00FF LE)
+	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x00, 0xFF, 0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	val, err := client.GetConfigurationValue(ctx, ConfigPacketBufferCount)
+	if err != nil {
+		t.Fatalf("GetConfigurationValue() error = %v", err)
+	}
+	if val != 255 {
+		t.Errorf("GetConfigurationValue() = %d, want 255", val)
+	}
+}
+
+func TestGetConfigurationValue_InvalidID(t *testing.T) {
+	// Response: EzspStatus=0x35 (EZSP_ERROR_INVALID_ID), value=0
+	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x35, 0x00, 0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetConfigurationValue(ctx, EzspConfigID(0xFE))
+	if err == nil {
+		t.Fatal("expected error for invalid config ID")
+	}
+}
+
+func TestGetConfigurationValue_ResponseTooShort(t *testing.T) {
+	// Response: only 1 byte
+	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetConfigurationValue(ctx, ConfigPacketBufferCount)
+	if err == nil {
+		t.Fatal("expected error for short response")
+	}
+}
+
+func TestSetConfigurationValue(t *testing.T) {
+	// Response: EzspStatus=0x00 (success)
+	resp := encodeExtended(0, frameIDSetConfigurationValue, []byte{0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := client.SetConfigurationValue(ctx, ConfigMaxHops, 15)
+	if err != nil {
+		t.Fatalf("SetConfigurationValue() error = %v", err)
+	}
+}
+
+func TestSetConfigurationValue_Error(t *testing.T) {
+	// Response: EzspStatus=0x36 (EZSP_ERROR_INVALID_VALUE)
+	resp := encodeExtended(0, frameIDSetConfigurationValue, []byte{0x36})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := client.SetConfigurationValue(ctx, ConfigMaxHops, 0xFFFF)
+	if err == nil {
+		t.Fatal("expected error for invalid value")
 	}
 }
 
