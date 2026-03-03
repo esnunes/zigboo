@@ -8,6 +8,7 @@
 //	zigboo --port /dev/ttyUSB0 network  # network state and parameters
 //	zigboo --port /dev/ttyUSB0 scan --type energy  # energy scan
 //	zigboo --port /dev/ttyUSB0 scan --type active  # active scan
+//	zigboo --port /dev/ttyUSB0 endpoints # list registered endpoints
 //	zigboo -v --port /dev/ttyUSB0 info   # verbose mode with frame dumps
 package main
 
@@ -38,6 +39,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  info      print version, node ID, and EUI-64\n")
 		fmt.Fprintf(os.Stderr, "  network   show network state and parameters\n")
 		fmt.Fprintf(os.Stderr, "  scan      energy or active channel scan (--type energy|active)\n")
+		fmt.Fprintf(os.Stderr, "  endpoints list registered endpoints and clusters\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flag.PrintDefaults()
 	}
@@ -82,6 +84,8 @@ func run(ctx context.Context, portPath string, cmd string) error {
 		return runNetwork(ctx, portPath)
 	case "scan":
 		return runScan(ctx, portPath, flag.Args()[1:])
+	case "endpoints":
+		return runEndpoints(ctx, portPath)
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
@@ -277,6 +281,78 @@ func runScan(ctx context.Context, portPath string, args []string) error {
 		}
 	default:
 		return fmt.Errorf("scan: unknown type %q (use energy or active)", *scanType)
+	}
+	return nil
+}
+
+func runEndpoints(ctx context.Context, portPath string) error {
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("endpoints: %w", err)
+	}
+
+	count, err := client.GetEndpointCount(ctx)
+	if err != nil {
+		return fmt.Errorf("endpoints: %w", err)
+	}
+
+	fmt.Printf("Endpoints: %d\n", count)
+
+	for i := uint8(0); i < count; i++ {
+		ep, err := client.GetEndpoint(ctx, i)
+		if err != nil {
+			return fmt.Errorf("endpoints: %w", err)
+		}
+
+		desc, err := client.GetEndpointDescription(ctx, ep)
+		if err != nil {
+			return fmt.Errorf("endpoints: %w", err)
+		}
+
+		fmt.Printf("\nEndpoint %d\n", ep)
+		fmt.Printf("  Profile:    0x%04X\n", desc.ProfileID)
+		fmt.Printf("  Device ID:  0x%04X\n", desc.DeviceID)
+		fmt.Printf("  Version:    %d\n", desc.DeviceVersion)
+
+		if desc.InputClusterCount > 0 {
+			fmt.Printf("  In clusters: ")
+			for j := uint8(0); j < desc.InputClusterCount; j++ {
+				cluster, err := client.GetEndpointCluster(ctx, ep, 0, j)
+				if err != nil {
+					return fmt.Errorf("endpoints: %w", err)
+				}
+				if j > 0 {
+					fmt.Printf(", ")
+				}
+				fmt.Printf("0x%04X", cluster)
+			}
+			fmt.Printf("\n")
+		} else {
+			fmt.Printf("  In clusters:  (none)\n")
+		}
+
+		if desc.OutputClusterCount > 0 {
+			fmt.Printf("  Out clusters: ")
+			for j := uint8(0); j < desc.OutputClusterCount; j++ {
+				cluster, err := client.GetEndpointCluster(ctx, ep, 1, j)
+				if err != nil {
+					return fmt.Errorf("endpoints: %w", err)
+				}
+				if j > 0 {
+					fmt.Printf(", ")
+				}
+				fmt.Printf("0x%04X", cluster)
+			}
+			fmt.Printf("\n")
+		} else {
+			fmt.Printf("  Out clusters: (none)\n")
+		}
 	}
 	return nil
 }

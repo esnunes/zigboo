@@ -38,4 +38,16 @@ const (
 
 	// frameIDEnergyScanResultHandler is the callback for energy scan results (0x0048).
 	frameIDEnergyScanResultHandler = 0x0048
+
+	// frameIDGetEndpoint returns the endpoint number at a given index (0x012E).
+	frameIDGetEndpoint = 0x012E
+
+	// frameIDGetEndpointCount returns the number of configured endpoints (0x012F).
+	frameIDGetEndpointCount = 0x012F
+
+	// frameIDGetEndpointDescription returns the description of an endpoint (0x0130).
+	frameIDGetEndpointDescription = 0x0130
+
+	// frameIDGetEndpointCluster returns a cluster ID from an endpoint's cluster list (0x0131).
+	frameIDGetEndpointCluster = 0x0131
 )

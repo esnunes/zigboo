@@ -233,6 +233,63 @@ func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, Netwo
 	return nodeType, params, nil
 }
 
+// GetEndpointCount returns the number of configured endpoints on the NCP.
+func (c *Client) GetEndpointCount(ctx context.Context) (uint8, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointCount, nil)
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: %w", err)
+	}
+	if len(resp) < 1 {
+		return 0, fmt.Errorf("ezsp: getEndpointCount: response too short (%d bytes)", len(resp))
+	}
+	return resp[0], nil
+}
+
+// GetEndpoint returns the endpoint number at the given index.
+func (c *Client) GetEndpoint(ctx context.Context, index uint8) (uint8, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpoint, []byte{index})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpoint: %w", err)
+	}
+	if len(resp) < 1 {
+		return 0, fmt.Errorf("ezsp: getEndpoint: response too short (%d bytes)", len(resp))
+	}
+	return resp[0], nil
+}
+
+// GetEndpointDescription returns the description of the given endpoint.
+// The response contains profileId(2 LE) + deviceId(2 LE) + deviceVersion(1) +
+// inputClusterCount(1) + outputClusterCount(1) = 7 bytes.
+func (c *Client) GetEndpointDescription(ctx context.Context, endpoint uint8) (EndpointDescription, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointDescription, []byte{endpoint})
+	if err != nil {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: %w", err)
+	}
+	if len(resp) < 7 {
+		return EndpointDescription{}, fmt.Errorf("ezsp: getEndpointDescription: response too short (%d bytes)", len(resp))
+	}
+	return EndpointDescription{
+		ProfileID:          binary.LittleEndian.Uint16(resp[0:2]),
+		DeviceID:           binary.LittleEndian.Uint16(resp[2:4]),
+		DeviceVersion:      resp[4],
+		InputClusterCount:  resp[5],
+		OutputClusterCount: resp[6],
+	}, nil
+}
+
+// GetEndpointCluster returns a cluster ID from an endpoint's cluster list.
+// listID 0 = input (server) clusters, listID 1 = output (client) clusters.
+func (c *Client) GetEndpointCluster(ctx context.Context, endpoint, listID, listIndex uint8) (uint16, error) {
+	resp, err := c.Command(ctx, frameIDGetEndpointCluster, []byte{endpoint, listID, listIndex})
+	if err != nil {
+		return 0, fmt.Errorf("ezsp: getEndpointCluster: %w", err)
+	}
+	if len(resp) < 2 {
+		return 0, fmt.Errorf("ezsp: getEndpointCluster: response too short (%d bytes)", len(resp))
+	}
+	return binary.LittleEndian.Uint16(resp[:2]), nil
+}
+
 // StartEnergyScan initiates an energy scan and returns a channel of results.
 //
 // It blocks until the NCP confirms the scan has started. On success, it spawns

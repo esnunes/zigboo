@@ -444,6 +444,151 @@ func TestGetNetworkParameters_ResponseTooShort(t *testing.T) {
 	}
 }
 
+// --- Endpoint tests ---
+
+func TestGetEndpointCount(t *testing.T) {
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{2})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	count, err := client.GetEndpointCount(ctx)
+	if err != nil {
+		t.Fatalf("GetEndpointCount() error = %v", err)
+	}
+	if count != 2 {
+		t.Errorf("GetEndpointCount() = %d, want 2", count)
+	}
+}
+
+func TestGetEndpointCount_Zero(t *testing.T) {
+	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	count, err := client.GetEndpointCount(ctx)
+	if err != nil {
+		t.Fatalf("GetEndpointCount() error = %v", err)
+	}
+	if count != 0 {
+		t.Errorf("GetEndpointCount() = %d, want 0", count)
+	}
+}
+
+func TestGetEndpoint(t *testing.T) {
+	// Index 0 → endpoint 1, index 1 → endpoint 242.
+	resp0 := encodeExtended(0, frameIDGetEndpoint, []byte{1})
+	resp1 := encodeExtended(0, frameIDGetEndpoint, []byte{242})
+	client, _, _ := setupMockNCP(t, [][]byte{resp0, resp1})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	ep, err := client.GetEndpoint(ctx, 0)
+	if err != nil {
+		t.Fatalf("GetEndpoint(0) error = %v", err)
+	}
+	if ep != 1 {
+		t.Errorf("GetEndpoint(0) = %d, want 1", ep)
+	}
+
+	ep, err = client.GetEndpoint(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetEndpoint(1) error = %v", err)
+	}
+	if ep != 242 {
+		t.Errorf("GetEndpoint(1) = %d, want 242", ep)
+	}
+}
+
+func TestGetEndpointDescription(t *testing.T) {
+	// Response: profileId=0x0104(HA), deviceId=0x0005, deviceVersion=1,
+	// inputClusterCount=3, outputClusterCount=1.
+	params := []byte{
+		0x04, 0x01, // profileId LE
+		0x05, 0x00, // deviceId LE
+		0x01,       // deviceVersion
+		0x03,       // inputClusterCount
+		0x01,       // outputClusterCount
+	}
+	resp := encodeExtended(0, frameIDGetEndpointDescription, params)
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	desc, err := client.GetEndpointDescription(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetEndpointDescription() error = %v", err)
+	}
+	if desc.ProfileID != 0x0104 {
+		t.Errorf("ProfileID = 0x%04X, want 0x0104", desc.ProfileID)
+	}
+	if desc.DeviceID != 0x0005 {
+		t.Errorf("DeviceID = 0x%04X, want 0x0005", desc.DeviceID)
+	}
+	if desc.DeviceVersion != 1 {
+		t.Errorf("DeviceVersion = %d, want 1", desc.DeviceVersion)
+	}
+	if desc.InputClusterCount != 3 {
+		t.Errorf("InputClusterCount = %d, want 3", desc.InputClusterCount)
+	}
+	if desc.OutputClusterCount != 1 {
+		t.Errorf("OutputClusterCount = %d, want 1", desc.OutputClusterCount)
+	}
+}
+
+func TestGetEndpointDescription_ResponseTooShort(t *testing.T) {
+	// Only 4 bytes — too short for the 7-byte response.
+	resp := encodeExtended(0, frameIDGetEndpointDescription, []byte{0x04, 0x01, 0x05, 0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := client.GetEndpointDescription(ctx, 1)
+	if err == nil {
+		t.Fatal("expected error for short response")
+	}
+}
+
+func TestGetEndpointCluster(t *testing.T) {
+	// Input cluster at index 0 → cluster ID 0x0006 (On/Off).
+	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x06, 0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	cluster, err := client.GetEndpointCluster(ctx, 1, 0, 0)
+	if err != nil {
+		t.Fatalf("GetEndpointCluster() error = %v", err)
+	}
+	if cluster != 0x0006 {
+		t.Errorf("GetEndpointCluster() = 0x%04X, want 0x0006", cluster)
+	}
+}
+
+func TestGetEndpointCluster_OutputList(t *testing.T) {
+	// Output cluster at index 0 → cluster ID 0x000A (Time).
+	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x0A, 0x00})
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	cluster, err := client.GetEndpointCluster(ctx, 1, 1, 0)
+	if err != nil {
+		t.Fatalf("GetEndpointCluster() error = %v", err)
+	}
+	if cluster != 0x000A {
+		t.Errorf("GetEndpointCluster() = 0x%04X, want 0x000A", cluster)
+	}
+}
+
 // --- Scan tests ---
 
 // injectCallbacks injects a sequence of EZSP callback frames into the mock port

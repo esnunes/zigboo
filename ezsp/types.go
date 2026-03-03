@@ -106,3 +106,12 @@ type NetworkScanResult struct {
 	LQI           uint8
 	RSSI          int8
 }
+
+// EndpointDescription holds the description of a registered endpoint.
+type EndpointDescription struct {
+	ProfileID          uint16
+	DeviceID           uint16
+	DeviceVersion      uint8
+	InputClusterCount  uint8
+	OutputClusterCount uint8
+}
