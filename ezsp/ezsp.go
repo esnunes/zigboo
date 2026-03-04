@@ -237,6 +237,103 @@ func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, Netwo
 	return nodeType, params, nil
 }
 
+// NetworkInit attempts to resume a previously formed network from NCP storage.
+// On EZSP v9+, sends a 2-byte EmberNetworkInitBitmask parameter.
+// Returns nil if the network was successfully resumed, or an error if no
+// stored network exists or the resume failed.
+func (c *Client) NetworkInit(ctx context.Context) error {
+	// EZSP v9+ requires a 2-byte bitmask parameter.
+	params := make([]byte, 2)
+	binary.LittleEndian.PutUint16(params, uint16(EmberNetworkInitNoOptions))
+
+	resp, err := c.Command(ctx, frameIDNetworkInit, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: networkInit: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: networkInit: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: networkInit: ember status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// FormNetwork forms a new Zigbee network with the given parameters.
+// The NCP must have security state configured via SetInitialSecurityState
+// before calling this method.
+//
+// The wire format uses the full EmberNetworkParameters struct (20 bytes):
+// ExtendedPanID(8) + PanID(2) + RadioTxPower(1) + RadioChannel(1) +
+// JoinMethod(1) + NwkManagerId(2) + NwkUpdateId(1) + Channels(4)
+func (c *Client) FormNetwork(ctx context.Context, np NetworkParameters) error {
+	// Full EmberNetworkParameters: 8 + 2 + 1 + 1 + 1 + 2 + 1 + 4 = 20 bytes
+	params := make([]byte, 20)
+	copy(params[0:8], np.ExtendedPanID[:])
+	binary.LittleEndian.PutUint16(params[8:10], np.PanID)
+	params[10] = byte(np.RadioTxPower)
+	params[11] = np.RadioChannel
+	params[12] = 0x00 // JoinMethod: EMBER_USE_MAC_ASSOCIATION (unused for coordinator)
+	binary.LittleEndian.PutUint16(params[13:15], 0x0000) // NwkManagerId: coordinator
+	params[15] = 0x00 // NwkUpdateId
+	// Channels: set the bit for the selected channel
+	channelMask := uint32(1) << np.RadioChannel
+	binary.LittleEndian.PutUint32(params[16:20], channelMask)
+
+	resp, err := c.Command(ctx, frameIDFormNetwork, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: formNetwork: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: formNetwork: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: formNetwork: ember status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// SetInitialSecurityState configures the security key material on the NCP.
+// Must be called before FormNetwork. The response uses EzspStatus (not EmberStatus).
+func (c *Client) SetInitialSecurityState(ctx context.Context, state EmberInitialSecurityState) error {
+	// Encode: Bitmask(2 LE) + PreconfiguredKey(16) + NetworkKey(16) +
+	//         KeySequenceNumber(1) + TrustCenterEUI64(8) = 43 bytes
+	params := make([]byte, 43)
+	binary.LittleEndian.PutUint16(params[0:2], uint16(state.Bitmask))
+	copy(params[2:18], state.PreconfiguredKey[:])
+	copy(params[18:34], state.NetworkKey[:])
+	params[34] = state.NetworkKeySequenceNumber
+	copy(params[35:43], state.PreconfiguredTrustCenterEUI64[:])
+
+	resp, err := c.Command(ctx, frameIDSetInitialSecurityState, params)
+	if err != nil {
+		return fmt.Errorf("ezsp: setInitialSecurityState: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: setInitialSecurityState: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: setInitialSecurityState: EZSP status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// PermitJoining opens or closes the network for device joining.
+// Duration 0 closes joining, 1-254 opens for that many seconds, 255 opens indefinitely.
+func (c *Client) PermitJoining(ctx context.Context, duration uint8) error {
+	resp, err := c.Command(ctx, frameIDPermitJoining, []byte{duration})
+	if err != nil {
+		return fmt.Errorf("ezsp: permitJoining: %w", err)
+	}
+	if len(resp) < 1 {
+		return fmt.Errorf("ezsp: permitJoining: response too short (%d bytes)", len(resp))
+	}
+	if resp[0] != 0x00 {
+		return fmt.Errorf("ezsp: permitJoining: ember status 0x%02X", resp[0])
+	}
+	return nil
+}
+
 // GetConfigurationValue reads a configuration value from the NCP.
 func (c *Client) GetConfigurationValue(ctx context.Context, id EzspConfigID) (uint16, error) {
 	resp, err := c.Command(ctx, frameIDGetConfigurationValue, []byte{byte(id)})

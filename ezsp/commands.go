@@ -15,8 +15,14 @@ const (
 	// frameIDVersion is the EZSP version negotiation command (0x0000).
 	frameIDVersion = 0x0000
 
+	// frameIDNetworkInit attempts to resume a previously formed network (0x0017).
+	frameIDNetworkInit = 0x0017
+
 	// frameIDNetworkState queries the current network state (0x0018).
 	frameIDNetworkState = 0x0018
+
+	// frameIDFormNetwork forms a new Zigbee network (0x001E).
+	frameIDFormNetwork = 0x001E
 
 	// frameIDStartScan initiates an energy or active scan (0x001A).
 	frameIDStartScan = 0x001A
@@ -26,6 +32,9 @@ const (
 
 	// frameIDScanCompleteHandler is the callback when a scan finishes (0x001C).
 	frameIDScanCompleteHandler = 0x001C
+
+	// frameIDPermitJoining opens or closes the network for device joining (0x0022).
+	frameIDPermitJoining = 0x0022
 
 	// frameIDGetEUI64 returns the dongle's IEEE 802.15.4 address (0x0026).
 	frameIDGetEUI64 = 0x0026
@@ -38,6 +47,9 @@ const (
 
 	// frameIDEnergyScanResultHandler is the callback for energy scan results (0x0048).
 	frameIDEnergyScanResultHandler = 0x0048
+
+	// frameIDSetInitialSecurityState configures security key material (0x0068).
+	frameIDSetInitialSecurityState = 0x0068
 
 	// frameIDGetConfigurationValue reads a configuration value (0x0052).
 	frameIDGetConfigurationValue = 0x0052
