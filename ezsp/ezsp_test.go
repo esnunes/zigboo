@@ -341,7 +341,7 @@ func TestNetworkState(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Build extended EZSP response: seq=0, fc_lo=0x00, fc_hi=0x01, frameID=0x0018, params=[status]
-			resp := encodeExtended(0, frameIDNetworkState, []byte{byte(tt.status)})
+			resp := EncodeExtended(0, frameIDNetworkState, []byte{byte(tt.status)})
 			client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -360,7 +360,7 @@ func TestNetworkState(t *testing.T) {
 
 func TestNetworkState_ResponseTooShort(t *testing.T) {
 	// Response with no params.
-	resp := encodeExtended(0, frameIDNetworkState, nil)
+	resp := EncodeExtended(0, frameIDNetworkState, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -388,7 +388,7 @@ func TestGetNetworkParameters(t *testing.T) {
 		0x0F,                                     // Channel 15
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // trailing: joinMethod, nwkManagerId, nwkUpdateId, channels
 	}
-	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
+	resp := EncodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -430,7 +430,7 @@ func TestGetNetworkParameters_ExtendedV14(t *testing.T) {
 		0x0B,       // Channel 11
 		0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0xFF, 0x07, // trailing fields
 	}
-	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
+	resp := EncodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -458,7 +458,7 @@ func TestGetNetworkParameters_EmberStatusError(t *testing.T) {
 	// EmberStatus = 0x70 (not success), rest is garbage.
 	params := make([]byte, 22)
 	params[0] = 0x70
-	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
+	resp := EncodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -473,7 +473,7 @@ func TestGetNetworkParameters_EmberStatusError(t *testing.T) {
 func TestGetNetworkParameters_ResponseTooShort(t *testing.T) {
 	// Only 5 bytes — too short for the full response.
 	params := []byte{0x00, 0x01, 0x02, 0x03, 0x04}
-	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
+	resp := EncodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -488,7 +488,7 @@ func TestGetNetworkParameters_ResponseTooShort(t *testing.T) {
 // --- Endpoint tests ---
 
 func TestGetEndpointCount(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 2})
+	resp := EncodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 2})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -504,7 +504,7 @@ func TestGetEndpointCount(t *testing.T) {
 }
 
 func TestGetEndpointCount_Zero(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0})
+	resp := EncodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -520,7 +520,7 @@ func TestGetEndpointCount_Zero(t *testing.T) {
 }
 
 func TestGetEndpointCount_Max(t *testing.T) {
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 240})
+	resp := EncodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 240})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -537,7 +537,7 @@ func TestGetEndpointCount_Max(t *testing.T) {
 
 func TestGetEndpointCount_EzspStatusError(t *testing.T) {
 	// EzspStatus=0xB5 (EMBER_INVALID_CALL) — NCP returns only the status byte.
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0xB5})
+	resp := EncodeExtended(0, frameIDGetEndpointCount, []byte{0xB5})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -551,7 +551,7 @@ func TestGetEndpointCount_EzspStatusError(t *testing.T) {
 
 func TestGetEndpointCount_Bogus(t *testing.T) {
 	// Count above 240 — should be rejected as bogus.
-	resp := encodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0xFF})
+	resp := EncodeExtended(0, frameIDGetEndpointCount, []byte{0x00, 0xFF})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -565,8 +565,8 @@ func TestGetEndpointCount_Bogus(t *testing.T) {
 
 func TestGetEndpoint(t *testing.T) {
 	// Index 0 → endpoint 1, index 1 → endpoint 242.
-	resp0 := encodeExtended(0, frameIDGetEndpoint, []byte{0x00, 1})
-	resp1 := encodeExtended(0, frameIDGetEndpoint, []byte{0x00, 242})
+	resp0 := EncodeExtended(0, frameIDGetEndpoint, []byte{0x00, 1})
+	resp1 := EncodeExtended(0, frameIDGetEndpoint, []byte{0x00, 242})
 	client, _, _ := setupMockNCP(t, [][]byte{resp0, resp1})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -600,7 +600,7 @@ func TestGetEndpointDescription(t *testing.T) {
 		0x03,       // inputClusterCount
 		0x01,       // outputClusterCount
 	}
-	resp := encodeExtended(0, frameIDGetEndpointDescription, params)
+	resp := EncodeExtended(0, frameIDGetEndpointDescription, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -631,7 +631,7 @@ func TestGetEndpointDescription_EzspStatusError(t *testing.T) {
 	// EzspStatus=0x02 (EMBER_INVALID_CALL) — NCP doesn't support this command.
 	params := make([]byte, 8)
 	params[0] = 0x02
-	resp := encodeExtended(0, frameIDGetEndpointDescription, params)
+	resp := EncodeExtended(0, frameIDGetEndpointDescription, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -645,7 +645,7 @@ func TestGetEndpointDescription_EzspStatusError(t *testing.T) {
 
 func TestGetEndpointDescription_ResponseTooShort(t *testing.T) {
 	// Only 5 bytes — too short for the 8-byte response.
-	resp := encodeExtended(0, frameIDGetEndpointDescription, []byte{0x00, 0x04, 0x01, 0x05, 0x00})
+	resp := EncodeExtended(0, frameIDGetEndpointDescription, []byte{0x00, 0x04, 0x01, 0x05, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -659,7 +659,7 @@ func TestGetEndpointDescription_ResponseTooShort(t *testing.T) {
 
 func TestGetEndpointCluster(t *testing.T) {
 	// Input cluster at index 0 → cluster ID 0x0006 (On/Off).
-	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x06, 0x00})
+	resp := EncodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x06, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -676,7 +676,7 @@ func TestGetEndpointCluster(t *testing.T) {
 
 func TestGetEndpointCluster_OutputList(t *testing.T) {
 	// Output cluster at index 0 → cluster ID 0x000A (Time).
-	resp := encodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x0A, 0x00})
+	resp := EncodeExtended(0, frameIDGetEndpointCluster, []byte{0x00, 0x0A, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -695,7 +695,7 @@ func TestGetEndpointCluster_OutputList(t *testing.T) {
 
 func TestGetConfigurationValue(t *testing.T) {
 	// Response: EzspStatus=0x00 (success), value=255 (0x00FF LE)
-	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x00, 0xFF, 0x00})
+	resp := EncodeExtended(0, frameIDGetConfigurationValue, []byte{0x00, 0xFF, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -712,7 +712,7 @@ func TestGetConfigurationValue(t *testing.T) {
 
 func TestGetConfigurationValue_InvalidID(t *testing.T) {
 	// Response: EzspStatus=0x35 (EZSP_ERROR_INVALID_ID), value=0
-	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x35, 0x00, 0x00})
+	resp := EncodeExtended(0, frameIDGetConfigurationValue, []byte{0x35, 0x00, 0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -726,7 +726,7 @@ func TestGetConfigurationValue_InvalidID(t *testing.T) {
 
 func TestGetConfigurationValue_ResponseTooShort(t *testing.T) {
 	// Response: only 1 byte
-	resp := encodeExtended(0, frameIDGetConfigurationValue, []byte{0x00})
+	resp := EncodeExtended(0, frameIDGetConfigurationValue, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -740,7 +740,7 @@ func TestGetConfigurationValue_ResponseTooShort(t *testing.T) {
 
 func TestSetConfigurationValue(t *testing.T) {
 	// Response: EzspStatus=0x00 (success)
-	resp := encodeExtended(0, frameIDSetConfigurationValue, []byte{0x00})
+	resp := EncodeExtended(0, frameIDSetConfigurationValue, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -754,7 +754,7 @@ func TestSetConfigurationValue(t *testing.T) {
 
 func TestSetConfigurationValue_Error(t *testing.T) {
 	// Response: EzspStatus=0x36 (EZSP_ERROR_INVALID_VALUE)
-	resp := encodeExtended(0, frameIDSetConfigurationValue, []byte{0x36})
+	resp := EncodeExtended(0, frameIDSetConfigurationValue, []byte{0x36})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -785,7 +785,7 @@ func injectCallbacks(mp *mockPort, callbacks [][]byte, startFrmNum byte) {
 
 func TestNetworkInit(t *testing.T) {
 	// Response: EmberStatus=0x00 (success)
-	resp := encodeExtended(0, frameIDNetworkInit, []byte{0x00})
+	resp := EncodeExtended(0, frameIDNetworkInit, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -799,7 +799,7 @@ func TestNetworkInit(t *testing.T) {
 
 func TestNetworkInit_EmberStatusError(t *testing.T) {
 	// Response: EmberStatus=0x93 (EMBER_INVALID_CALL — no stored network)
-	resp := encodeExtended(0, frameIDNetworkInit, []byte{0x93})
+	resp := EncodeExtended(0, frameIDNetworkInit, []byte{0x93})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -812,7 +812,7 @@ func TestNetworkInit_EmberStatusError(t *testing.T) {
 }
 
 func TestNetworkInit_ResponseTooShort(t *testing.T) {
-	resp := encodeExtended(0, frameIDNetworkInit, nil)
+	resp := EncodeExtended(0, frameIDNetworkInit, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -828,7 +828,7 @@ func TestNetworkInit_ResponseTooShort(t *testing.T) {
 
 func TestFormNetwork(t *testing.T) {
 	// Response: EmberStatus=0x00 (success)
-	resp := encodeExtended(0, frameIDFormNetwork, []byte{0x00})
+	resp := EncodeExtended(0, frameIDFormNetwork, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -848,7 +848,7 @@ func TestFormNetwork(t *testing.T) {
 
 func TestFormNetwork_EmberStatusError(t *testing.T) {
 	// Response: EmberStatus=0x70 (failure)
-	resp := encodeExtended(0, frameIDFormNetwork, []byte{0x70})
+	resp := EncodeExtended(0, frameIDFormNetwork, []byte{0x70})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -861,7 +861,7 @@ func TestFormNetwork_EmberStatusError(t *testing.T) {
 }
 
 func TestFormNetwork_ResponseTooShort(t *testing.T) {
-	resp := encodeExtended(0, frameIDFormNetwork, nil)
+	resp := EncodeExtended(0, frameIDFormNetwork, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -875,7 +875,7 @@ func TestFormNetwork_ResponseTooShort(t *testing.T) {
 
 // TestFormNetwork_ParamEncoding verifies the exact wire format of the encoded parameters.
 func TestFormNetwork_ParamEncoding(t *testing.T) {
-	resp := encodeExtended(0, frameIDFormNetwork, []byte{0x00})
+	resp := EncodeExtended(0, frameIDFormNetwork, []byte{0x00})
 
 	var capturedParams []byte
 	client, _, mp := setupMockNCP(t, [][]byte{resp})
@@ -919,7 +919,7 @@ func TestFormNetwork_ParamEncoding(t *testing.T) {
 
 func TestSetInitialSecurityState(t *testing.T) {
 	// Response: EzspStatus=0x00 (success)
-	resp := encodeExtended(0, frameIDSetInitialSecurityState, []byte{0x00})
+	resp := EncodeExtended(0, frameIDSetInitialSecurityState, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -943,7 +943,7 @@ func TestSetInitialSecurityState(t *testing.T) {
 
 func TestSetInitialSecurityState_EzspStatusError(t *testing.T) {
 	// Response: EzspStatus=0x35 (error)
-	resp := encodeExtended(0, frameIDSetInitialSecurityState, []byte{0x35})
+	resp := EncodeExtended(0, frameIDSetInitialSecurityState, []byte{0x35})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -956,7 +956,7 @@ func TestSetInitialSecurityState_EzspStatusError(t *testing.T) {
 }
 
 func TestSetInitialSecurityState_ResponseTooShort(t *testing.T) {
-	resp := encodeExtended(0, frameIDSetInitialSecurityState, nil)
+	resp := EncodeExtended(0, frameIDSetInitialSecurityState, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -972,7 +972,7 @@ func TestSetInitialSecurityState_ResponseTooShort(t *testing.T) {
 
 func TestPermitJoining(t *testing.T) {
 	// Response: EmberStatus=0x00 (success) for duration=60
-	resp := encodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -986,7 +986,7 @@ func TestPermitJoining(t *testing.T) {
 
 func TestPermitJoining_Close(t *testing.T) {
 	// Duration=0 closes joining.
-	resp := encodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1000,7 +1000,7 @@ func TestPermitJoining_Close(t *testing.T) {
 
 func TestPermitJoining_Indefinite(t *testing.T) {
 	// Duration=255 opens indefinitely.
-	resp := encodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1014,7 +1014,7 @@ func TestPermitJoining_Indefinite(t *testing.T) {
 
 func TestPermitJoining_EmberStatusError(t *testing.T) {
 	// Response: EmberStatus=0x70 (failure)
-	resp := encodeExtended(0, frameIDPermitJoining, []byte{0x70})
+	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x70})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1027,7 +1027,7 @@ func TestPermitJoining_EmberStatusError(t *testing.T) {
 }
 
 func TestPermitJoining_ResponseTooShort(t *testing.T) {
-	resp := encodeExtended(0, frameIDPermitJoining, nil)
+	resp := EncodeExtended(0, frameIDPermitJoining, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1043,13 +1043,13 @@ func TestPermitJoining_ResponseTooShort(t *testing.T) {
 
 func TestStartEnergyScan(t *testing.T) {
 	// startScan response: EmberStatus=0x00 (success)
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
 
 	// Callback frames: 3 energy results + scanComplete
-	cb1 := encodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9}) // ch11, RSSI=-87
-	cb2 := encodeExtended(0, frameIDEnergyScanResultHandler, []byte{12, 0xA4}) // ch12, RSSI=-92
-	cb3 := encodeExtended(0, frameIDEnergyScanResultHandler, []byte{13, 0xA1}) // ch13, RSSI=-95
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{13, 0x00})  // ch13, status=success
+	cb1 := EncodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9}) // ch11, RSSI=-87
+	cb2 := EncodeExtended(0, frameIDEnergyScanResultHandler, []byte{12, 0xA4}) // ch12, RSSI=-92
+	cb3 := EncodeExtended(0, frameIDEnergyScanResultHandler, []byte{13, 0xA1}) // ch13, RSSI=-95
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{13, 0x00})  // ch13, status=success
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
@@ -1092,7 +1092,7 @@ func TestStartEnergyScan(t *testing.T) {
 
 func TestStartEnergyScan_ScanFailed(t *testing.T) {
 	// startScan response: EmberStatus=0x70 (failure)
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x70})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x70})
 	client, _, _ := setupMockNCP(t, [][]byte{scanResp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1106,7 +1106,7 @@ func TestStartEnergyScan_ScanFailed(t *testing.T) {
 
 func TestStartEnergyScan_ContextCancelled(t *testing.T) {
 	// startScan succeeds but no callbacks arrive — context gets cancelled.
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{scanResp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1144,7 +1144,7 @@ func TestStartEnergyScan_ContextCancelled(t *testing.T) {
 
 func TestStartActiveScan(t *testing.T) {
 	// startScan response: success
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
 
 	// Callback: networkFoundHandler with a discovered network.
 	// channel=15, panId=0x1A2B, extPanId=[01..08], allowJoin=1, stackProfile=2,
@@ -1159,8 +1159,8 @@ func TestStartActiveScan(t *testing.T) {
 		0xFF,       // lqi
 		byte(0xD3), // rssi = -45
 	}
-	cb1 := encodeExtended(0, frameIDNetworkFoundHandler, nwkParams)
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{15, 0x00})
+	cb1 := EncodeExtended(0, frameIDNetworkFoundHandler, nwkParams)
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{15, 0x00})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
@@ -1214,8 +1214,8 @@ func TestStartActiveScan(t *testing.T) {
 }
 
 func TestStartActiveScan_ZeroResults(t *testing.T) {
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{26, 0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{26, 0x00})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
@@ -1247,8 +1247,8 @@ func TestStartActiveScan_ZeroResults(t *testing.T) {
 func TestStartActiveScan_NoBeaconsStatus(t *testing.T) {
 	// EMBER_NO_BEACONS (0x36) is the normal completion status for active scans
 	// when the NCP finishes scanning with no more beacons to report.
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{26, emberNoBeacons})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{26, emberNoBeacons})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
@@ -1274,12 +1274,12 @@ func TestStartActiveScan_NoBeaconsStatus(t *testing.T) {
 
 func TestScanExclusivity(t *testing.T) {
 	// Start a scan, verify Command() returns ErrScanInProgress.
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
 	// Inject scanComplete after a delay so the scan finishes eventually.
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x00})
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x00})
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		injectCallbacks(mp, [][]byte{cbDone}, 1)
@@ -1314,10 +1314,10 @@ func TestScanExclusivity(t *testing.T) {
 }
 
 func TestStartEnergyScan_ScanCompleteWithError(t *testing.T) {
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
-	cb1 := encodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
+	cb1 := EncodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9})
 	// scanComplete with error status 0x35
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x35})
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x35})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 
@@ -1351,11 +1351,11 @@ func TestStartEnergyScan_ScanCompleteWithError(t *testing.T) {
 }
 
 func TestStartEnergyScan_UnexpectedCallback(t *testing.T) {
-	scanResp := encodeExtended(0, frameIDStartScan, []byte{0x00})
+	scanResp := EncodeExtended(0, frameIDStartScan, []byte{0x00})
 	// Inject an unexpected callback (stackStatusHandler = 0x0019) between energy results.
-	cbUnexpected := encodeExtended(0, 0x0019, []byte{0x02})
-	cb1 := encodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9})
-	cbDone := encodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x00})
+	cbUnexpected := EncodeExtended(0, 0x0019, []byte{0x02})
+	cb1 := EncodeExtended(0, frameIDEnergyScanResultHandler, []byte{11, 0xA9})
+	cbDone := EncodeExtended(0, frameIDScanCompleteHandler, []byte{11, 0x00})
 
 	client, _, mp := setupMockNCP(t, [][]byte{scanResp})
 

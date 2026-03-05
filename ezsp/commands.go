@@ -57,6 +57,27 @@ const (
 	// frameIDSetConfigurationValue writes a configuration value (0x0053).
 	frameIDSetConfigurationValue = 0x0053
 
+	// FrameIDAddEndpoint registers a new endpoint on the NCP (0x0002).
+	FrameIDAddEndpoint = 0x0002
+
+	// FrameIDChildJoinHandler is the callback when a child device joins (0x0023).
+	FrameIDChildJoinHandler = 0x0023
+
+	// FrameIDTrustCenterJoinHandler is the callback for trust center join events (0x0024).
+	FrameIDTrustCenterJoinHandler = 0x0024
+
+	// FrameIDSendUnicast sends an APS unicast message (0x0034).
+	FrameIDSendUnicast = 0x0034
+
+	// FrameIDMessageSentHandler is the callback confirming message delivery (0x003F).
+	FrameIDMessageSentHandler = 0x003F
+
+	// FrameIDIncomingMessageHandler is the callback for incoming APS messages (0x0045).
+	FrameIDIncomingMessageHandler = 0x0045
+
+	// FrameIDStackStatusHandler is the callback for network state changes (0x0019).
+	FrameIDStackStatusHandler = 0x0019
+
 	// frameIDGetEndpoint returns the endpoint number at a given index (0x012E).
 	frameIDGetEndpoint = 0x012E
 

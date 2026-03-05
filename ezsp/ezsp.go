@@ -79,7 +79,7 @@ func New(conn *ash.Conn) *Client {
 func (c *Client) NegotiateVersion(ctx context.Context) (VersionInfo, error) {
 	// Phase 1: legacy format, desired version = 4.
 	slog.Debug("ezsp: negotiating version (phase 1, legacy format)")
-	frame := encodeLegacy(c.nextSeq(), frameIDVersion, []byte{4})
+	frame := EncodeLegacy(c.nextSeq(), frameIDVersion, []byte{4})
 
 	resp, err := c.sendRaw(ctx, frame)
 	if err != nil {
@@ -107,7 +107,7 @@ func (c *Client) NegotiateVersion(ctx context.Context) (VersionInfo, error) {
 		"desiredVersion", info.ProtocolVersion)
 
 	c.extended = true
-	frame = encodeExtended(c.nextSeq(), frameIDVersion, []byte{info.ProtocolVersion})
+	frame = EncodeExtended(c.nextSeq(), frameIDVersion, []byte{info.ProtocolVersion})
 
 	resp, err = c.sendRaw(ctx, frame)
 	if err != nil {
@@ -144,9 +144,9 @@ func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]
 
 	var frame []byte
 	if c.extended {
-		frame = encodeExtended(c.nextSeq(), frameID, params)
+		frame = EncodeExtended(c.nextSeq(), frameID, params)
 	} else {
-		frame = encodeLegacy(c.nextSeq(), frameID, params)
+		frame = EncodeLegacy(c.nextSeq(), frameID, params)
 	}
 	slog.Debug("ezsp: Command", "frame", hex.EncodeToString(frame))
 
@@ -166,9 +166,9 @@ func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]
 		var respFrameID uint16
 		var respParams []byte
 		if c.extended {
-			_, respFrameID, respParams, err = decodeExtended(resp)
+			_, respFrameID, respParams, err = DecodeExtended(resp)
 		} else {
-			_, respFrameID, respParams, err = decodeLegacy(resp)
+			_, respFrameID, respParams, err = DecodeLegacy(resp)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("ezsp: decode response: %w", err)
@@ -665,9 +665,9 @@ func (c *Client) runActiveScan(ctx context.Context, results chan<- NetworkScanRe
 // decodeCallback decodes an EZSP callback frame and returns the frame ID and parameters.
 func (c *Client) decodeCallback(raw []byte) (frameID uint16, params []byte, err error) {
 	if c.extended {
-		_, frameID, params, err = decodeExtended(raw)
+		_, frameID, params, err = DecodeExtended(raw)
 	} else {
-		_, frameID, params, err = decodeLegacy(raw)
+		_, frameID, params, err = DecodeLegacy(raw)
 	}
 	return
 }
@@ -697,9 +697,9 @@ func parseVersionResponse(data []byte, extended bool) (VersionInfo, error) {
 	var err error
 
 	if extended {
-		_, _, params, err = decodeExtended(data)
+		_, _, params, err = DecodeExtended(data)
 	} else {
-		_, _, params, err = decodeLegacy(data)
+		_, _, params, err = DecodeLegacy(data)
 	}
 	if err != nil {
 		return VersionInfo{}, err

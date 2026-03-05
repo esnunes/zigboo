@@ -30,9 +30,9 @@ func TestEncodeLegacy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := encodeLegacy(tt.seq, tt.frameID, tt.params)
+			got := EncodeLegacy(tt.seq, tt.frameID, tt.params)
 			if !bytes.Equal(got, tt.want) {
-				t.Errorf("encodeLegacy() = %x, want %x", got, tt.want)
+				t.Errorf("EncodeLegacy() = %x, want %x", got, tt.want)
 			}
 		})
 	}
@@ -63,9 +63,9 @@ func TestEncodeExtended(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := encodeExtended(tt.seq, tt.frameID, tt.params)
+			got := EncodeExtended(tt.seq, tt.frameID, tt.params)
 			if !bytes.Equal(got, tt.want) {
-				t.Errorf("encodeExtended() = %x, want %x", got, tt.want)
+				t.Errorf("EncodeExtended() = %x, want %x", got, tt.want)
 			}
 		})
 	}
@@ -74,9 +74,9 @@ func TestEncodeExtended(t *testing.T) {
 func TestDecodeLegacy(t *testing.T) {
 	// Simulate a version response: seq=0, fc=0x00, frameID=0x00, params=[13, 2, 0xD0, 0x07]
 	data := []byte{0x00, 0x00, 0x00, 0x0D, 0x02, 0xD0, 0x07}
-	seq, frameID, params, err := decodeLegacy(data)
+	seq, frameID, params, err := DecodeLegacy(data)
 	if err != nil {
-		t.Fatalf("decodeLegacy() error = %v", err)
+		t.Fatalf("DecodeLegacy() error = %v", err)
 	}
 	if seq != 0 {
 		t.Errorf("seq = %d, want 0", seq)
@@ -92,9 +92,9 @@ func TestDecodeLegacy(t *testing.T) {
 func TestDecodeExtended(t *testing.T) {
 	// Extended version response: seq=1, fc_lo=0x00, fc_hi=0x01, frameID=0x0000, params=[13, 2, 0xD0, 0x07]
 	data := []byte{0x01, 0x00, 0x01, 0x00, 0x00, 0x0D, 0x02, 0xD0, 0x07}
-	seq, frameID, params, err := decodeExtended(data)
+	seq, frameID, params, err := DecodeExtended(data)
 	if err != nil {
-		t.Fatalf("decodeExtended() error = %v", err)
+		t.Fatalf("DecodeExtended() error = %v", err)
 	}
 	if seq != 1 {
 		t.Errorf("seq = %d, want 1", seq)
@@ -108,16 +108,16 @@ func TestDecodeExtended(t *testing.T) {
 }
 
 func TestDecodeLegacyTooShort(t *testing.T) {
-	_, _, _, err := decodeLegacy([]byte{0x00, 0x00})
+	_, _, _, err := DecodeLegacy([]byte{0x00, 0x00})
 	if err != ErrFrameTooShort {
-		t.Errorf("decodeLegacy() error = %v, want %v", err, ErrFrameTooShort)
+		t.Errorf("DecodeLegacy() error = %v, want %v", err, ErrFrameTooShort)
 	}
 }
 
 func TestDecodeExtendedTooShort(t *testing.T) {
-	_, _, _, err := decodeExtended([]byte{0x00, 0x00, 0x01, 0x00})
+	_, _, _, err := DecodeExtended([]byte{0x00, 0x00, 0x01, 0x00})
 	if err != ErrFrameTooShort {
-		t.Errorf("decodeExtended() error = %v, want %v", err, ErrFrameTooShort)
+		t.Errorf("DecodeExtended() error = %v, want %v", err, ErrFrameTooShort)
 	}
 }
 
@@ -133,9 +133,9 @@ func TestIsExtendedFormat(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isExtendedFormat(tt.data)
+			got := IsExtendedFormat(tt.data)
 			if got != tt.want {
-				t.Errorf("isExtendedFormat(%x) = %v, want %v", tt.data, got, tt.want)
+				t.Errorf("IsExtendedFormat(%x) = %v, want %v", tt.data, got, tt.want)
 			}
 		})
 	}
