@@ -392,6 +392,12 @@ func runNetworkPermitJoin(ctx context.Context, portPath string, args []string) e
 		return fmt.Errorf("network permit-join: %w", err)
 	}
 
+	// Restore stored network from NVM — after ASH reset the NCP has no
+	// active network until networkInit is called.
+	if err := client.NetworkInit(ctx); err != nil {
+		return fmt.Errorf("network permit-join: no active network (run 'network init' first): %w", err)
+	}
+
 	if err := client.PermitJoining(ctx, uint8(*duration)); err != nil {
 		return fmt.Errorf("network permit-join: %w", err)
 	}
