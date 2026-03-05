@@ -52,6 +52,7 @@ type Host struct {
 	mu       sync.Mutex // protects seq and msgTag
 
 	callbacks   map[uint16]callbackHandler
+	msgMu       sync.RWMutex
 	msgHandlers map[messageHandlerKey]func(msg IncomingMessage)
 	cmdCh       chan commandRequest
 
@@ -78,8 +79,10 @@ func (h *Host) OnCallback(frameID uint16, fn callbackHandler) {
 }
 
 // OnMessage registers a handler for incoming APS messages matching the given
-// profile and cluster ID. Must be called before Start.
+// profile and cluster ID. Safe to call before or after Start.
 func (h *Host) OnMessage(profileID, clusterID uint16, fn func(msg IncomingMessage)) {
+	h.msgMu.Lock()
+	defer h.msgMu.Unlock()
 	h.msgHandlers[messageHandlerKey{profileID, clusterID}] = fn
 }
 
@@ -281,7 +284,10 @@ func (h *Host) handleIncomingMessage(params []byte) {
 	}
 
 	key := messageHandlerKey{msg.ApsFrame.ProfileID, msg.ApsFrame.ClusterID}
-	if fn, ok := h.msgHandlers[key]; ok {
+	h.msgMu.RLock()
+	fn, ok := h.msgHandlers[key]
+	h.msgMu.RUnlock()
+	if ok {
 		fn(msg)
 	} else {
 		slog.Debug("host: unhandled incoming message",
