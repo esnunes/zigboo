@@ -972,7 +972,7 @@ func TestSetInitialSecurityState_ResponseTooShort(t *testing.T) {
 
 func TestPermitJoining(t *testing.T) {
 	// Response: EmberStatus=0x00 (success) for duration=60
-	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, FrameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -986,7 +986,7 @@ func TestPermitJoining(t *testing.T) {
 
 func TestPermitJoining_Close(t *testing.T) {
 	// Duration=0 closes joining.
-	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, FrameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1000,7 +1000,7 @@ func TestPermitJoining_Close(t *testing.T) {
 
 func TestPermitJoining_Indefinite(t *testing.T) {
 	// Duration=255 opens indefinitely.
-	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x00})
+	resp := EncodeExtended(0, FrameIDPermitJoining, []byte{0x00})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1014,7 +1014,7 @@ func TestPermitJoining_Indefinite(t *testing.T) {
 
 func TestPermitJoining_EmberStatusError(t *testing.T) {
 	// Response: EmberStatus=0x70 (failure)
-	resp := EncodeExtended(0, frameIDPermitJoining, []byte{0x70})
+	resp := EncodeExtended(0, FrameIDPermitJoining, []byte{0x70})
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1027,7 +1027,7 @@ func TestPermitJoining_EmberStatusError(t *testing.T) {
 }
 
 func TestPermitJoining_ResponseTooShort(t *testing.T) {
-	resp := EncodeExtended(0, frameIDPermitJoining, nil)
+	resp := EncodeExtended(0, FrameIDPermitJoining, nil)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -33,8 +33,8 @@ const (
 	// frameIDScanCompleteHandler is the callback when a scan finishes (0x001C).
 	frameIDScanCompleteHandler = 0x001C
 
-	// frameIDPermitJoining opens or closes the network for device joining (0x0022).
-	frameIDPermitJoining = 0x0022
+	// FrameIDPermitJoining opens or closes the network for device joining (0x0022).
+	FrameIDPermitJoining = 0x0022
 
 	// frameIDGetEUI64 returns the dongle's IEEE 802.15.4 address (0x0026).
 	frameIDGetEUI64 = 0x0026

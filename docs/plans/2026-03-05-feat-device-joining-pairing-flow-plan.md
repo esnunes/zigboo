@@ -433,26 +433,26 @@ Network closed for joining.
 
 **Acceptance criteria:**
 
-- [ ] `zigboo pair` opens permit-join and streams join events
-- [ ] Device interview runs automatically on join (node descriptor + endpoints + simple descriptor + ZCL Basic)
-- [ ] Partial interview failure saves what was gathered with `interviewComplete: false`
-- [ ] Device info persisted to `devices.json` keyed by EUI-64
-- [ ] Rejoin (same EUI-64) updates existing record
-- [ ] Ctrl+C closes permit-join via separate cleanup context
-- [ ] Duration validated (1-254 normal, 255 with warning, 0 rejected)
-- [ ] "No active network" error if network not formed
-- [ ] Multiple join events are queued and processed sequentially
+- [x] `zigboo pair` opens permit-join and streams join events
+- [x] Device interview runs automatically on join (node descriptor + endpoints + simple descriptor + ZCL Basic)
+- [x] Partial interview failure saves what was gathered with `interviewComplete: false`
+- [x] Device info persisted to `devices.json` keyed by EUI-64
+- [x] Rejoin (same EUI-64) updates existing record
+- [x] Ctrl+C closes permit-join via separate cleanup context
+- [x] Duration validated (1-254 normal, 255 with warning, 0 rejected)
+- [x] "No active network" error if network not formed
+- [x] Multiple join events are queued and processed sequentially
 - [ ] Tests for: happy path, no devices, partial interview, rejoin, Ctrl+C cleanup
 
 ## Acceptance Criteria
 
 ### Functional Requirements
 
-- [ ] `zigboo pair --duration 120` opens network, detects joins, interviews devices, persists to JSON
-- [ ] Device interview captures: node type, manufacturer, model, firmware, endpoints, clusters
-- [ ] `devices.json` created/updated atomically with correct schema
-- [ ] Graceful Ctrl+C closes permit-join before exiting
-- [ ] Existing commands (`network state`, `scan`, `config`, etc.) continue to work unchanged
+- [x] `zigboo pair --duration 120` opens network, detects joins, interviews devices, persists to JSON
+- [x] Device interview captures: node type, manufacturer, model, firmware, endpoints, clusters
+- [x] `devices.json` created/updated atomically with correct schema
+- [x] Graceful Ctrl+C closes permit-join before exiting
+- [x] Existing commands (`network state`, `scan`, `config`, etc.) continue to work unchanged
 
 ### Non-Functional Requirements
 

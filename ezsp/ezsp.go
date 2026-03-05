@@ -354,7 +354,7 @@ func (c *Client) SetInitialSecurityState(ctx context.Context, state EmberInitial
 // PermitJoining opens or closes the network for device joining.
 // Duration 0 closes joining, 1-254 opens for that many seconds, 255 opens indefinitely.
 func (c *Client) PermitJoining(ctx context.Context, duration uint8) error {
-	resp, err := c.Command(ctx, frameIDPermitJoining, []byte{duration})
+	resp, err := c.Command(ctx, FrameIDPermitJoining, []byte{duration})
 	if err != nil {
 		return fmt.Errorf("ezsp: permitJoining: %w", err)
 	}
