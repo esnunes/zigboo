@@ -2,6 +2,13 @@ package zdo
 
 import "encoding/binary"
 
+// Zigbee logical device types (from the Node Descriptor).
+const (
+	LogicalTypeCoordinator uint8 = 0
+	LogicalTypeRouter      uint8 = 1
+	LogicalTypeEndDevice   uint8 = 2
+)
+
 // NodeDescriptor holds the parsed ZDO Node Descriptor.
 type NodeDescriptor struct {
 	LogicalType         uint8  // 0=coordinator, 1=router, 2=end device

@@ -96,7 +96,7 @@ func (c *Client) NegotiateVersion(ctx context.Context) (VersionInfo, error) {
 		"stackType", info.StackType,
 		"stackVersion", info.StackVersionString())
 
-	if info.ProtocolVersion < legacyVersionThreshold {
+	if info.ProtocolVersion < ExtendedVersionThreshold {
 		// Legacy NCP — use legacy format going forward.
 		c.version = info.ProtocolVersion
 		return info, nil
@@ -593,7 +593,7 @@ func (c *Client) runEnergyScan(ctx context.Context, results chan<- EnergyScanRes
 			}
 
 		case frameIDScanCompleteHandler:
-			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
+			if len(params) >= 2 && params[1] != EmberSuccess && params[1] != emberNoBeacons {
 				errCh <- fmt.Errorf("ezsp: energyScan: complete with status 0x%02X", params[1])
 			}
 			return
@@ -650,7 +650,7 @@ func (c *Client) runActiveScan(ctx context.Context, results chan<- NetworkScanRe
 			results <- r
 
 		case frameIDScanCompleteHandler:
-			if len(params) >= 2 && params[1] != emberSuccess && params[1] != emberNoBeacons {
+			if len(params) >= 2 && params[1] != EmberSuccess && params[1] != emberNoBeacons {
 				errCh <- fmt.Errorf("ezsp: activeScan: complete with status 0x%02X", params[1])
 			}
 			return

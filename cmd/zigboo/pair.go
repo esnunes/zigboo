@@ -51,7 +51,7 @@ func runPair(ctx context.Context, portPath string, args []string) error {
 
 	// Phase 2: Register HA endpoint BEFORE NetworkInit.
 	// The NCP requires endpoints to be registered while no network is active.
-	if err := addEndpointRaw(ctx, client, 1, ezsp.ProfileIDHA, 0x0005, nil, nil); err != nil {
+	if err := addEndpointRaw(ctx, client, 1, ezsp.ProfileIDHA, ezsp.DeviceIDConfigurationTool, nil, nil); err != nil {
 		return fmt.Errorf("pair: register endpoint: %w", err)
 	}
 
@@ -70,7 +70,7 @@ func runPair(ctx context.Context, portPath string, args []string) error {
 
 	// Phase 3: Create host and start callback dispatch.
 	// Use background context so the host stays alive for cleanup on Ctrl+C.
-	extended := versionInfo.ProtocolVersion >= 9
+	extended := versionInfo.ProtocolVersion >= ezsp.ExtendedVersionThreshold
 	h := host.New(conn, extended)
 
 	// Log stack status changes (network up/down, permit-join open/closed).
@@ -103,7 +103,7 @@ func runPair(ctx context.Context, portPath string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("pair: permitJoining: %w", err)
 	}
-	if len(resp) < 1 || resp[0] != 0x00 {
+	if len(resp) < 1 || resp[0] != ezsp.EmberSuccess {
 		return fmt.Errorf("pair: permitJoining: ember status 0x%02X", resp[0])
 	}
 
@@ -130,8 +130,7 @@ func runPair(ctx context.Context, portPath string, args []string) error {
 	for {
 		select {
 		case evt := <-joins:
-			// Status 2 = EMBER_DEVICE_LEFT → skip.
-			if evt.status == 2 {
+			if evt.status == ezsp.JoinStatusDeviceLeft {
 				eui := ezsp.FormatEUI64(evt.eui64)
 				fmt.Printf("[%s] Device left: 0x%04X (EUI64: %s)\n",
 					time.Now().Format("15:04:05"), evt.nodeID, eui)
@@ -163,7 +162,7 @@ func runPair(ctx context.Context, portPath string, args []string) error {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			resp, err := h.Command(cleanupCtx, ezsp.FrameIDPermitJoining, []byte{0})
 			cleanupCancel()
-			if err == nil && len(resp) > 0 && resp[0] == 0x00 {
+			if err == nil && len(resp) > 0 && resp[0] == ezsp.EmberSuccess {
 				fmt.Printf("Network closed for joining.\n")
 			}
 
@@ -209,11 +208,11 @@ func interviewDevice(ctx context.Context, zdoClient *zdo.Client, zclClient *zcl.
 		complete = false
 	} else {
 		switch nd.LogicalType {
-		case 0:
+		case zdo.LogicalTypeCoordinator:
 			dev.NodeType = "coordinator"
-		case 1:
+		case zdo.LogicalTypeRouter:
 			dev.NodeType = "router"
-		case 2:
+		case zdo.LogicalTypeEndDevice:
 			dev.NodeType = "end-device"
 		default:
 			dev.NodeType = fmt.Sprintf("unknown(%d)", nd.LogicalType)
@@ -273,19 +272,19 @@ func interviewDevice(ctx context.Context, zdoClient *zdo.Client, zclClient *zcl.
 			fmt.Printf("  Basic attributes: failed (%v)\n", err)
 			complete = false
 		} else {
-			if v, ok := attrs[zcl.AttrManufacturerName]; ok && v.Status == 0x00 {
+			if v, ok := attrs[zcl.AttrManufacturerName]; ok && v.Status == zcl.StatusSuccess {
 				if s, ok := v.Value.(string); ok {
 					dev.Manufacturer = s
 					fmt.Printf("  Manufacturer: %s\n", s)
 				}
 			}
-			if v, ok := attrs[zcl.AttrModelIdentifier]; ok && v.Status == 0x00 {
+			if v, ok := attrs[zcl.AttrModelIdentifier]; ok && v.Status == zcl.StatusSuccess {
 				if s, ok := v.Value.(string); ok {
 					dev.Model = s
 					fmt.Printf("  Model: %s\n", s)
 				}
 			}
-			if v, ok := attrs[zcl.AttrSWBuildID]; ok && v.Status == 0x00 {
+			if v, ok := attrs[zcl.AttrSWBuildID]; ok && v.Status == zcl.StatusSuccess {
 				if s, ok := v.Value.(string); ok {
 					dev.Firmware = s
 					fmt.Printf("  Firmware: %s\n", s)
@@ -354,7 +353,7 @@ func addEndpointRaw(ctx context.Context, client *ezsp.Client, endpoint uint8, pr
 	if err != nil {
 		return fmt.Errorf("addEndpoint: %w", err)
 	}
-	if len(resp) < 1 || resp[0] != 0x00 {
+	if len(resp) < 1 || resp[0] != ezsp.EmberSuccess {
 		return fmt.Errorf("addEndpoint: EZSP status 0x%02X", resp[0])
 	}
 	return nil

@@ -1,13 +1,31 @@
 package ezsp
 
-// EmberStatus values used by scan completion.
+// EmberStatus values.
 const (
-	// emberSuccess indicates the operation completed successfully.
-	emberSuccess = 0x00
+	// EmberSuccess indicates the operation completed successfully.
+	EmberSuccess = 0x00
 
 	// emberNoBeacons indicates an active scan completed with no beacons found
 	// on the last channel. This is the normal completion status for active scans.
 	emberNoBeacons = 0x36
+)
+
+// Trust center join status values (from trustCenterJoinHandler callback).
+const (
+	// JoinStatusSecuredRejoin indicates a device rejoined with a known key.
+	JoinStatusSecuredRejoin byte = 0
+	// JoinStatusUnsecuredJoin indicates a new device joined the network.
+	JoinStatusUnsecuredJoin byte = 1
+	// JoinStatusDeviceLeft indicates a device left the network.
+	JoinStatusDeviceLeft byte = 2
+	// JoinStatusUnsecuredRejoin indicates a device rejoined without a key.
+	JoinStatusUnsecuredRejoin byte = 3
+)
+
+// Zigbee HA device IDs.
+const (
+	// DeviceIDConfigurationTool is the HA device ID for a configuration tool (0x0005).
+	DeviceIDConfigurationTool uint16 = 0x0005
 )
 
 // EZSP command frame IDs.

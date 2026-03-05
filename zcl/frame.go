@@ -42,7 +42,7 @@ func decodeReadAttributesResponse(data []byte) (map[uint16]AttributeValue, error
 		status := records[2]
 		records = records[3:]
 
-		if status != 0x00 {
+		if status != StatusSuccess {
 			result[attrID] = AttributeValue{Status: status}
 			continue
 		}
@@ -56,7 +56,7 @@ func decodeReadAttributesResponse(data []byte) (map[uint16]AttributeValue, error
 		value, n := decodeValue(dataType, records)
 		records = records[n:]
 		result[attrID] = AttributeValue{
-			Status:   0,
+			Status:   StatusSuccess,
 			DataType: dataType,
 			Value:    value,
 		}

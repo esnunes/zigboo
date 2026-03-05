@@ -4,9 +4,9 @@ import "encoding/binary"
 
 // EZSP frame format constants.
 const (
-	// legacyVersionThreshold is the EZSP version at which the extended
-	// frame format is required. Versions < 9 use legacy format.
-	legacyVersionThreshold = 9
+	// ExtendedVersionThreshold is the EZSP version at which the extended
+	// frame format is required. Versions below this use legacy format.
+	ExtendedVersionThreshold = 9
 
 	// extendedFormatMarker is the value of fc_hi in extended format frames,
 	// identifying them as extended format.

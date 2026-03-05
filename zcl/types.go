@@ -18,9 +18,15 @@ const (
 // BasicClusterID is the ZCL Basic cluster (0x0000).
 const BasicClusterID uint16 = 0x0000
 
+// ZCL attribute status codes.
+const (
+	StatusSuccess              uint8 = 0x00
+	StatusUnsupportedAttribute uint8 = 0x86
+)
+
 // AttributeValue holds a decoded ZCL attribute.
 type AttributeValue struct {
-	Status   uint8 // 0x00 = success, 0x86 = unsupported attribute
+	Status   uint8 // StatusSuccess or StatusUnsupportedAttribute
 	DataType uint8
 	Value    any // string for CharString, nil for unsupported/error
 }
