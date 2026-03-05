@@ -473,3 +473,136 @@ func TestCommand_ContextCancelled(t *testing.T) {
 		t.Fatal("Command() expected error, got nil")
 	}
 }
+
+func TestAddEndpoint(t *testing.T) {
+	// addEndpoint response: EzspStatus=0x00 (success)
+	resp := ezsp.EncodeExtended(0, ezsp.FrameIDAddEndpoint, []byte{0x00})
+	conn, _ := setupMockNCP(t, [][]byte{resp})
+
+	h := New(conn, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.Start(ctx)
+	defer h.Close()
+
+	err := h.AddEndpoint(ctx, 1, ezsp.ProfileIDHA, 0x0005,
+		[]uint16{0x0000},            // input: Basic
+		[]uint16{0x0000, 0x0003},    // output: Basic, Identify
+	)
+	if err != nil {
+		t.Fatalf("AddEndpoint() error = %v", err)
+	}
+}
+
+func TestSendUnicast(t *testing.T) {
+	// sendUnicast response: EmberStatus=0x00 (success)
+	resp := ezsp.EncodeExtended(0, ezsp.FrameIDSendUnicast, []byte{0x00})
+	conn, _ := setupMockNCP(t, [][]byte{resp})
+
+	h := New(conn, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.Start(ctx)
+	defer h.Close()
+
+	apsFrame := ezsp.EmberApsFrame{
+		ProfileID:           ezsp.ProfileIDZDP,
+		ClusterID:           0x0005, // Active Endpoints Request
+		SourceEndpoint:      0,
+		DestinationEndpoint: 0,
+		Options:             ezsp.APSOptionEnableRouteDiscovery | ezsp.APSOptionRetry,
+	}
+	payload := []byte{0x01, 0x34, 0x12} // ZDO: seq=1, addr=0x1234
+	err := h.SendUnicast(ctx, 0x1234, apsFrame, payload)
+	if err != nil {
+		t.Fatalf("SendUnicast() error = %v", err)
+	}
+}
+
+func TestIncomingMessageRouting(t *testing.T) {
+	conn, mp := setupMockNCP(t, nil)
+
+	h := New(conn, true)
+
+	msgReceived := make(chan IncomingMessage, 1)
+	h.OnMessage(ezsp.ProfileIDZDP, 0x8005, func(msg IncomingMessage) {
+		msgReceived <- msg
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.Start(ctx)
+	defer h.Close()
+
+	// Build incomingMessageHandler callback params:
+	// type(1) + apsFrame(11) + lqi(1) + rssi(1) + sender(2) + bindingIndex(1) + addressIndex(1) + msgLen(1) + msg(N)
+	apsFrame := ezsp.EncodeApsFrame(ezsp.EmberApsFrame{
+		ProfileID:           ezsp.ProfileIDZDP,
+		ClusterID:           0x8005, // Active Endpoints Response
+		SourceEndpoint:      0,
+		DestinationEndpoint: 0,
+	})
+	zdoPayload := []byte{0x01, 0x00, 0x34, 0x12, 0x02, 0x01, 0x02} // seq, status, addr, count, ep1, ep2
+	cbParams := make([]byte, 0, 19+len(zdoPayload))
+	cbParams = append(cbParams, 0x00)           // type: UNICAST
+	cbParams = append(cbParams, apsFrame...)     // APS frame (11 bytes)
+	cbParams = append(cbParams, 0xFF)            // LQI
+	cbParams = append(cbParams, 0xD0)            // RSSI (-48)
+	cbParams = append(cbParams, 0x34, 0x12)      // sender node ID: 0x1234
+	cbParams = append(cbParams, 0xFF)            // bindingIndex
+	cbParams = append(cbParams, 0xFF)            // addressIndex
+	cbParams = append(cbParams, byte(len(zdoPayload)))
+	cbParams = append(cbParams, zdoPayload...)
+
+	cbFrame := ezsp.EncodeExtended(0, ezsp.FrameIDIncomingMessageHandler, cbParams)
+	injectCallback(mp, 0, 0, cbFrame)
+
+	select {
+	case msg := <-msgReceived:
+		if msg.SenderID != 0x1234 {
+			t.Errorf("SenderID = 0x%04X, want 0x1234", msg.SenderID)
+		}
+		if msg.ApsFrame.ClusterID != 0x8005 {
+			t.Errorf("ClusterID = 0x%04X, want 0x8005", msg.ApsFrame.ClusterID)
+		}
+		if msg.LQI != 0xFF {
+			t.Errorf("LQI = %d, want 255", msg.LQI)
+		}
+		if len(msg.Payload) != len(zdoPayload) {
+			t.Errorf("Payload len = %d, want %d", len(msg.Payload), len(zdoPayload))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for incoming message")
+	}
+}
+
+func TestMessageSentHandler(t *testing.T) {
+	// Verify messageSentHandler doesn't panic on valid input.
+	conn, mp := setupMockNCP(t, nil)
+
+	h := New(conn, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.Start(ctx)
+	defer h.Close()
+
+	// Build messageSentHandler callback params:
+	// type(1) + indexOrDest(2) + apsFrame(11) + tag(1) + status(1) + msgLen(1) + msg(N)
+	apsBytes := ezsp.EncodeApsFrame(ezsp.EmberApsFrame{
+		ProfileID: ezsp.ProfileIDZDP,
+		ClusterID: 0x0005,
+	})
+	cbParams := make([]byte, 0, 17)
+	cbParams = append(cbParams, 0x00)       // type: DIRECT
+	cbParams = append(cbParams, 0x34, 0x12) // destination: 0x1234
+	cbParams = append(cbParams, apsBytes...) // APS frame (11 bytes)
+	cbParams = append(cbParams, 0x00)       // tag
+	cbParams = append(cbParams, 0x00)       // status: success
+	cbParams = append(cbParams, 0x00)       // msgLen: 0
+
+	cbFrame := ezsp.EncodeExtended(0, ezsp.FrameIDMessageSentHandler, cbParams)
+	injectCallback(mp, 0, 0, cbFrame)
+
+	// Give the callback time to be processed without panic.
+	time.Sleep(200 * time.Millisecond)
+}

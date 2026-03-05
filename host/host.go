@@ -8,6 +8,7 @@ package host
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -47,10 +48,12 @@ type Host struct {
 	conn     *ash.Conn
 	extended bool
 	seq      byte
-	mu       sync.Mutex // protects seq
+	msgTag   byte
+	mu       sync.Mutex // protects seq and msgTag
 
-	callbacks map[uint16]callbackHandler
-	cmdCh     chan commandRequest
+	callbacks   map[uint16]callbackHandler
+	msgHandlers map[messageHandlerKey]func(msg IncomingMessage)
+	cmdCh       chan commandRequest
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -60,10 +63,11 @@ type Host struct {
 // Set extended to true for EZSP v9+ extended frame format.
 func New(conn *ash.Conn, extended bool) *Host {
 	return &Host{
-		conn:      conn,
-		extended:  extended,
-		callbacks: make(map[uint16]callbackHandler),
-		cmdCh:     make(chan commandRequest),
+		conn:        conn,
+		extended:    extended,
+		callbacks:   make(map[uint16]callbackHandler),
+		msgHandlers: make(map[messageHandlerKey]func(msg IncomingMessage)),
+		cmdCh:       make(chan commandRequest),
 	}
 }
 
@@ -73,8 +77,18 @@ func (h *Host) OnCallback(frameID uint16, fn callbackHandler) {
 	h.callbacks[frameID] = fn
 }
 
+// OnMessage registers a handler for incoming APS messages matching the given
+// profile and cluster ID. Must be called before Start.
+func (h *Host) OnMessage(profileID, clusterID uint16, fn func(msg IncomingMessage)) {
+	h.msgHandlers[messageHandlerKey{profileID, clusterID}] = fn
+}
+
 // Start begins the reader goroutine that serializes ASH access.
+// It also registers internal callbacks for message routing.
 func (h *Host) Start(ctx context.Context) {
+	h.OnCallback(ezsp.FrameIDIncomingMessageHandler, h.handleIncomingMessage)
+	h.OnCallback(ezsp.FrameIDMessageSentHandler, h.handleMessageSent)
+
 	ctx, h.cancel = context.WithCancel(ctx)
 	h.wg.Add(1)
 	go h.run(ctx)
@@ -204,6 +218,94 @@ func (h *Host) dispatchCallback(frameID uint16, params []byte) {
 	}
 }
 
+// AddEndpoint registers a local endpoint on the NCP.
+func (h *Host) AddEndpoint(ctx context.Context, endpoint uint8, profileID, deviceID uint16, inputClusters, outputClusters []uint16) error {
+	// endpoint(1) + profileId(2) + deviceId(2) + appFlags(1) + inputCount(1) + outputCount(1) + clusters
+	params := make([]byte, 8+len(inputClusters)*2+len(outputClusters)*2)
+	params[0] = endpoint
+	binary.LittleEndian.PutUint16(params[1:3], profileID)
+	binary.LittleEndian.PutUint16(params[3:5], deviceID)
+	params[5] = 0x00 // appFlags: deviceVersion=0
+	params[6] = byte(len(inputClusters))
+	params[7] = byte(len(outputClusters))
+	off := 8
+	for _, c := range inputClusters {
+		binary.LittleEndian.PutUint16(params[off:off+2], c)
+		off += 2
+	}
+	for _, c := range outputClusters {
+		binary.LittleEndian.PutUint16(params[off:off+2], c)
+		off += 2
+	}
+
+	resp, err := h.Command(ctx, ezsp.FrameIDAddEndpoint, params)
+	if err != nil {
+		return fmt.Errorf("host: addEndpoint: %w", err)
+	}
+	if len(resp) < 1 || resp[0] != 0x00 {
+		return fmt.Errorf("host: addEndpoint: EZSP status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// SendUnicast sends an APS unicast message to a destination node.
+func (h *Host) SendUnicast(ctx context.Context, destID uint16, apsFrame ezsp.EmberApsFrame, payload []byte) error {
+	tag := h.nextMsgTag()
+
+	apsBytes := ezsp.EncodeApsFrame(apsFrame)
+	// type(1) + destination(2) + apsFrame(11) + tag(1) + msgLen(1) + payload
+	params := make([]byte, 0, 16+len(payload))
+	params = append(params, 0x00) // EMBER_OUTGOING_DIRECT
+	params = append(params, byte(destID), byte(destID>>8))
+	params = append(params, apsBytes...)
+	params = append(params, tag)
+	params = append(params, byte(len(payload)))
+	params = append(params, payload...)
+
+	resp, err := h.Command(ctx, ezsp.FrameIDSendUnicast, params)
+	if err != nil {
+		return fmt.Errorf("host: sendUnicast: %w", err)
+	}
+	if len(resp) < 1 || resp[0] != 0x00 {
+		return fmt.Errorf("host: sendUnicast: ember status 0x%02X", resp[0])
+	}
+	return nil
+}
+
+// handleIncomingMessage decodes and routes an incomingMessageHandler callback.
+func (h *Host) handleIncomingMessage(params []byte) {
+	msg, err := decodeIncomingMessage(params)
+	if err != nil {
+		slog.Debug("host: decode incoming message", "err", err)
+		return
+	}
+
+	key := messageHandlerKey{msg.ApsFrame.ProfileID, msg.ApsFrame.ClusterID}
+	if fn, ok := h.msgHandlers[key]; ok {
+		fn(msg)
+	} else {
+		slog.Debug("host: unhandled incoming message",
+			"profileID", fmt.Sprintf("0x%04X", msg.ApsFrame.ProfileID),
+			"clusterID", fmt.Sprintf("0x%04X", msg.ApsFrame.ClusterID))
+	}
+}
+
+// handleMessageSent logs delivery status from messageSentHandler callbacks.
+func (h *Host) handleMessageSent(params []byte) {
+	// type(1) + indexOrDest(2) + apsFrame(11) + tag(1) + status(1) + msgLen(1) = 17
+	if len(params) < 17 {
+		slog.Debug("host: messageSent too short", "len", len(params))
+		return
+	}
+	tag := params[14]
+	status := params[15]
+	if status != 0x00 {
+		slog.Debug("host: message delivery failed",
+			"tag", tag,
+			"status", fmt.Sprintf("0x%02X", status))
+	}
+}
+
 // nextSeq returns the next EZSP sequence number (uint8, monotonic, wrapping).
 func (h *Host) nextSeq() byte {
 	h.mu.Lock()
@@ -211,4 +313,13 @@ func (h *Host) nextSeq() byte {
 	seq := h.seq
 	h.seq++
 	return seq
+}
+
+// nextMsgTag returns the next APS message tag (uint8, monotonic, wrapping).
+func (h *Host) nextMsgTag() byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	tag := h.msgTag
+	h.msgTag++
+	return tag
 }

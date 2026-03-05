@@ -1,6 +1,7 @@
 package ezsp
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -207,6 +208,67 @@ const (
 	ConfigTCRejoinsUsingWellKnownKeyTimeoutS EzspConfigID = 0x38
 	ConfigCTuneValue                         EzspConfigID = 0x39
 )
+
+// Zigbee profile IDs.
+const (
+	// ProfileIDZDP is the Zigbee Device Profile (ZDO) profile ID.
+	ProfileIDZDP uint16 = 0x0000
+	// ProfileIDHA is the Zigbee Home Automation profile ID.
+	ProfileIDHA uint16 = 0x0104
+)
+
+// Common APS options for unicast messaging.
+const (
+	// APSOptionRetry enables APS-layer retries.
+	APSOptionRetry uint16 = 0x0040
+	// APSOptionEnableRouteDiscovery enables route discovery for the message.
+	APSOptionEnableRouteDiscovery uint16 = 0x0100
+)
+
+// EmberApsFrame represents an APS frame header used in Zigbee messaging.
+// Wire format: profileId(2 LE) + clusterId(2 LE) + srcEndpoint(1) +
+// dstEndpoint(1) + options(2 LE) + groupId(2 LE) + sequence(1) = 11 bytes.
+type EmberApsFrame struct {
+	ProfileID           uint16
+	ClusterID           uint16
+	SourceEndpoint      uint8
+	DestinationEndpoint uint8
+	Options             uint16
+	GroupID             uint16
+	Sequence            uint8
+}
+
+// ApsFrameSize is the wire size of an EmberApsFrame.
+const ApsFrameSize = 11
+
+// EncodeApsFrame encodes an EmberApsFrame to wire format (11 bytes).
+func EncodeApsFrame(f EmberApsFrame) []byte {
+	buf := make([]byte, ApsFrameSize)
+	binary.LittleEndian.PutUint16(buf[0:2], f.ProfileID)
+	binary.LittleEndian.PutUint16(buf[2:4], f.ClusterID)
+	buf[4] = f.SourceEndpoint
+	buf[5] = f.DestinationEndpoint
+	binary.LittleEndian.PutUint16(buf[6:8], f.Options)
+	binary.LittleEndian.PutUint16(buf[8:10], f.GroupID)
+	buf[10] = f.Sequence
+	return buf
+}
+
+// DecodeApsFrame decodes an EmberApsFrame from wire format.
+func DecodeApsFrame(data []byte) (EmberApsFrame, error) {
+	if len(data) < ApsFrameSize {
+		return EmberApsFrame{}, fmt.Errorf("ezsp: APS frame too short (%d bytes)", len(data))
+	}
+	return EmberApsFrame{
+		ProfileID:           binary.LittleEndian.Uint16(data[0:2]),
+		ClusterID:           binary.LittleEndian.Uint16(data[2:4]),
+		SourceEndpoint:      data[4],
+		DestinationEndpoint: data[5],
+		Options:             binary.LittleEndian.Uint16(data[6:8]),
+		GroupID:             binary.LittleEndian.Uint16(data[8:10]),
+		Sequence:            data[10],
+	}, nil
+}
 
 // configNames maps each config ID to its human-readable name.
 var configNames = map[EzspConfigID]string{
