@@ -5,7 +5,10 @@
 //	zigboo --port /dev/ttyUSB0 reset     # ASH reset handshake
 //	zigboo --port /dev/ttyUSB0 version   # EZSP version negotiation
 //	zigboo --port /dev/ttyUSB0 info      # version + node-id + eui64
-//	zigboo --port /dev/ttyUSB0 network  # network state and parameters
+//	zigboo --port /dev/ttyUSB0 network state          # network state and parameters
+//	zigboo --port /dev/ttyUSB0 network init            # form or resume network
+//	zigboo --port /dev/ttyUSB0 network init --channel 15 --pan-id 0x1A2B
+//	zigboo --port /dev/ttyUSB0 network permit-join --duration 60
 //	zigboo --port /dev/ttyUSB0 scan --type energy  # energy scan
 //	zigboo --port /dev/ttyUSB0 scan --type active  # active scan
 //	zigboo --port /dev/ttyUSB0 endpoints # list registered endpoints
@@ -17,6 +20,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -41,7 +45,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  reset     perform ASH reset handshake\n")
 		fmt.Fprintf(os.Stderr, "  version   negotiate EZSP protocol version\n")
 		fmt.Fprintf(os.Stderr, "  info      print version, node ID, and EUI-64\n")
-		fmt.Fprintf(os.Stderr, "  network   show network state and parameters\n")
+		fmt.Fprintf(os.Stderr, "  network   network management (init|state|permit-join)\n")
 		fmt.Fprintf(os.Stderr, "  scan      energy or active channel scan (--type energy|active)\n")
 		fmt.Fprintf(os.Stderr, "  endpoints list registered endpoints and clusters\n")
 		fmt.Fprintf(os.Stderr, "  config    get/set NCP configuration values (list|get|set)\n")
@@ -86,7 +90,7 @@ func run(ctx context.Context, portPath string, cmd string) error {
 	case "info":
 		return runInfo(ctx, portPath)
 	case "network":
-		return runNetwork(ctx, portPath)
+		return runNetwork(ctx, portPath, flag.Args()[1:])
 	case "scan":
 		return runScan(ctx, portPath, flag.Args()[1:])
 	case "endpoints":
@@ -205,7 +209,26 @@ func runInfo(ctx context.Context, portPath string) error {
 	return nil
 }
 
-func runNetwork(ctx context.Context, portPath string) error {
+func runNetwork(ctx context.Context, portPath string, args []string) error {
+	// Default to "state" when no subcommand is given (backward compat).
+	sub := "state"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+
+	switch sub {
+	case "state":
+		return runNetworkState(ctx, portPath)
+	case "init":
+		return runNetworkInit(ctx, portPath, args[1:])
+	case "permit-join":
+		return runNetworkPermitJoin(ctx, portPath, args[1:])
+	default:
+		return fmt.Errorf("network: unknown subcommand %q (use init, state, or permit-join)", sub)
+	}
+}
+
+func runNetworkState(ctx context.Context, portPath string) error {
 	client, conn, port, err := resetAndNegotiate(ctx, portPath)
 	if err != nil {
 		return err
@@ -214,12 +237,16 @@ func runNetwork(ctx context.Context, portPath string) error {
 	defer conn.Close()
 
 	if _, err := client.NegotiateVersion(ctx); err != nil {
-		return fmt.Errorf("network: %w", err)
+		return fmt.Errorf("network state: %w", err)
 	}
+
+	// Try to resume stored network — after ASH reset the NCP is in "no
+	// network" state until networkInit restores from NVM.
+	_ = client.NetworkInit(ctx)
 
 	state, err := client.NetworkState(ctx)
 	if err != nil {
-		return fmt.Errorf("network: %w", err)
+		return fmt.Errorf("network state: %w", err)
 	}
 
 	fmt.Printf("Network state: %s\n", state)
@@ -230,7 +257,7 @@ func runNetwork(ctx context.Context, portPath string) error {
 
 	nodeType, params, err := client.GetNetworkParameters(ctx)
 	if err != nil {
-		return fmt.Errorf("network: %w", err)
+		return fmt.Errorf("network state: %w", err)
 	}
 
 	fmt.Printf("  PAN ID:        0x%04X\n", params.PanID)
@@ -238,6 +265,142 @@ func runNetwork(ctx context.Context, portPath string) error {
 	fmt.Printf("  Channel:       %d\n", params.RadioChannel)
 	fmt.Printf("  TX power:      %d dBm\n", params.RadioTxPower)
 	fmt.Printf("  Node type:     %s\n", nodeType)
+	return nil
+}
+
+func runNetworkInit(ctx context.Context, portPath string, args []string) error {
+	initFlags := flag.NewFlagSet("network init", flag.ExitOnError)
+	channel := initFlags.Int("channel", 11, "Zigbee channel (11-26)")
+	panID := initFlags.Int("pan-id", 0xFFFF, "PAN ID (0xFFFF for auto-select)")
+	txPower := initFlags.Int("tx-power", 8, "TX power in dBm")
+	if err := initFlags.Parse(args); err != nil {
+		return err
+	}
+
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("network init: %w", err)
+	}
+
+	// Guard: if already joined, show state and exit without modifying security.
+	state, err := client.NetworkState(ctx)
+	if err != nil {
+		return fmt.Errorf("network init: %w", err)
+	}
+	if state == ezsp.NetworkStatusJoinedNetwork {
+		fmt.Printf("Network already active\n")
+		return printNetworkDetails(ctx, client)
+	}
+
+	// Try to resume a stored network first (uses security state from NVM).
+	resumed := true
+	if err := client.NetworkInit(ctx); err != nil {
+		// No stored network — set security and form a new one.
+		resumed = false
+
+		var networkKey [16]byte
+		if _, err := rand.Read(networkKey[:]); err != nil {
+			return fmt.Errorf("network init: generate network key: %w", err)
+		}
+
+		secState := ezsp.EmberInitialSecurityState{
+			Bitmask: ezsp.EmberHavePreconfiguredKey | ezsp.EmberHaveNetworkKey |
+				ezsp.EmberTrustCenterGlobalLinkKey | ezsp.EmberHaveTrustCenterEUI64,
+			PreconfiguredKey: ezsp.ZigbeeHALinkKey,
+			NetworkKey:       networkKey,
+		}
+		if err := client.SetInitialSecurityState(ctx, secState); err != nil {
+			return fmt.Errorf("network init: %w", err)
+		}
+
+		np := ezsp.NetworkParameters{
+			PanID:        uint16(*panID),
+			RadioTxPower: int8(*txPower),
+			RadioChannel: uint8(*channel),
+		}
+		// PAN ID 0xFFFF is the broadcast address and is rejected by some NCP
+		// firmware. Generate a random PAN ID in the valid range instead.
+		if np.PanID == 0xFFFF {
+			var buf [2]byte
+			if _, err := rand.Read(buf[:]); err != nil {
+				return fmt.Errorf("network init: generate PAN ID: %w", err)
+			}
+			np.PanID = uint16(buf[0])<<8 | uint16(buf[1])
+			// Avoid reserved values: 0x0000 (unassigned) and 0xFFFF (broadcast).
+			for np.PanID == 0x0000 || np.PanID == 0xFFFF {
+				np.PanID = 0x1A62 // zigbee2mqtt default
+			}
+		}
+
+		if err := client.FormNetwork(ctx, np); err != nil {
+			return fmt.Errorf("network init: %w", err)
+		}
+	}
+
+	if resumed {
+		fmt.Printf("Network resumed\n")
+	} else {
+		fmt.Printf("Network formed\n")
+	}
+	return printNetworkDetails(ctx, client)
+}
+
+func printNetworkDetails(ctx context.Context, client *ezsp.Client) error {
+	state, err := client.NetworkState(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+	fmt.Printf("  State:         %s\n", state)
+
+	nodeType, params, err := client.GetNetworkParameters(ctx)
+	if err != nil {
+		return fmt.Errorf("network: %w", err)
+	}
+	fmt.Printf("  PAN ID:        0x%04X\n", params.PanID)
+	fmt.Printf("  Extended PAN:  %s\n", ezsp.FormatEUI64(params.ExtendedPanID))
+	fmt.Printf("  Channel:       %d\n", params.RadioChannel)
+	fmt.Printf("  TX power:      %d dBm\n", params.RadioTxPower)
+	fmt.Printf("  Node type:     %s\n", nodeType)
+	return nil
+}
+
+func runNetworkPermitJoin(ctx context.Context, portPath string, args []string) error {
+	pjFlags := flag.NewFlagSet("network permit-join", flag.ExitOnError)
+	duration := pjFlags.Int("duration", 60, "join window duration in seconds (0=close, 255=indefinite)")
+	if err := pjFlags.Parse(args); err != nil {
+		return err
+	}
+
+	if *duration < 0 || *duration > 255 {
+		return fmt.Errorf("network permit-join: duration must be 0-255, got %d", *duration)
+	}
+
+	client, conn, port, err := resetAndNegotiate(ctx, portPath)
+	if err != nil {
+		return err
+	}
+	defer port.Close()
+	defer conn.Close()
+
+	if _, err := client.NegotiateVersion(ctx); err != nil {
+		return fmt.Errorf("network permit-join: %w", err)
+	}
+
+	if err := client.PermitJoining(ctx, uint8(*duration)); err != nil {
+		return fmt.Errorf("network permit-join: %w", err)
+	}
+
+	if *duration == 0 {
+		fmt.Printf("Permit joining: closed\n")
+	} else {
+		fmt.Printf("Permit joining: open for %d seconds\n", *duration)
+	}
 	return nil
 }
 

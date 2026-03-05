@@ -122,6 +122,44 @@ type EndpointDescription struct {
 	OutputClusterCount uint8
 }
 
+// EmberInitialSecurityBitmask controls which security fields are set.
+type EmberInitialSecurityBitmask uint16
+
+const (
+	// EmberTrustCenterGlobalLinkKey indicates the preconfigured key is a global link key.
+	EmberTrustCenterGlobalLinkKey EmberInitialSecurityBitmask = 0x0004
+	// EmberHaveTrustCenterEUI64 indicates the trust center EUI-64 is provided.
+	EmberHaveTrustCenterEUI64 EmberInitialSecurityBitmask = 0x0040
+	// EmberHavePreconfiguredKey indicates a preconfigured link key is provided.
+	EmberHavePreconfiguredKey EmberInitialSecurityBitmask = 0x0100
+	// EmberHaveNetworkKey indicates a network key is provided.
+	EmberHaveNetworkKey EmberInitialSecurityBitmask = 0x0200
+)
+
+// EmberInitialSecurityState holds the security configuration for network formation.
+type EmberInitialSecurityState struct {
+	Bitmask                      EmberInitialSecurityBitmask
+	PreconfiguredKey             [16]byte
+	NetworkKey                   [16]byte
+	NetworkKeySequenceNumber     uint8
+	PreconfiguredTrustCenterEUI64 [8]byte
+}
+
+// EmberNetworkInitBitmask controls network initialization behavior (EZSP v9+).
+type EmberNetworkInitBitmask uint16
+
+const (
+	// EmberNetworkInitNoOptions performs standard network initialization.
+	EmberNetworkInitNoOptions EmberNetworkInitBitmask = 0x0000
+)
+
+// ZigbeeHALinkKey is the well-known "ZigBeeAlliance09" trust center link key
+// used by Zigbee Home Automation networks.
+var ZigbeeHALinkKey = [16]byte{
+	0x5A, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6C,
+	0x6C, 0x69, 0x61, 0x6E, 0x63, 0x65, 0x30, 0x39,
+}
+
 // EzspConfigID identifies a configuration value on the NCP.
 // Use with GetConfigurationValue / SetConfigurationValue.
 type EzspConfigID uint8
