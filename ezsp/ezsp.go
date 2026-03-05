@@ -10,6 +10,7 @@ package ezsp
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -130,6 +131,8 @@ func (c *Client) NegotiateVersion(ctx context.Context) (VersionInfo, error) {
 
 // Command sends an EZSP command and returns the response parameters.
 // The frame is automatically encoded in the correct format (legacy or extended).
+// Asynchronous callbacks (e.g., stackStatusHandler) that arrive before the
+// command response are silently skipped.
 // Returns ErrScanInProgress if a scan is currently running.
 func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]byte, error) {
 	c.mu.Lock()
@@ -145,28 +148,49 @@ func (c *Client) Command(ctx context.Context, frameID uint16, params []byte) ([]
 	} else {
 		frame = encodeLegacy(c.nextSeq(), frameID, params)
 	}
+	slog.Debug("ezsp: Command", "frame", hex.EncodeToString(frame))
 
-	resp, err := c.sendRaw(ctx, frame)
+	// Apply timeout for the entire command including any callback skipping.
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+
+	resp, err := c.conn.Send(ctx, frame)
 	if err != nil {
 		return nil, err
 	}
 
-	// Decode response and validate frame ID matches our request.
-	var respFrameID uint16
-	var respParams []byte
-	if c.extended {
-		_, respFrameID, respParams, err = decodeExtended(resp)
-	} else {
-		_, respFrameID, respParams, err = decodeLegacy(resp)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("ezsp: decode response: %w", err)
-	}
-	if respFrameID != frameID {
-		return nil, fmt.Errorf("%w: got 0x%04X for command 0x%04X", ErrUnexpectedResponse, respFrameID, frameID)
-	}
+	// Decode response, skipping any asynchronous callbacks that arrive
+	// before the actual command response (e.g., stackStatusHandler after
+	// formNetwork).
+	for {
+		var respFrameID uint16
+		var respParams []byte
+		if c.extended {
+			_, respFrameID, respParams, err = decodeExtended(resp)
+		} else {
+			_, respFrameID, respParams, err = decodeLegacy(resp)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("ezsp: decode response: %w", err)
+		}
+		if respFrameID == frameID {
+			slog.Debug("ezsp: response",
+				"frameID", fmt.Sprintf("0x%04X", respFrameID),
+				"params", hex.EncodeToString(respParams))
+			return respParams, nil
+		}
 
-	return respParams, nil
+		// Frame ID doesn't match — this is an asynchronous callback.
+		// Log it and wait for the actual command response.
+		slog.Debug("ezsp: skipping callback",
+			"callbackFrameID", fmt.Sprintf("0x%04X", respFrameID),
+			"expectedFrameID", fmt.Sprintf("0x%04X", frameID))
+
+		resp, err = c.conn.Recv(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("ezsp: recv after callback: %w", err)
+		}
+	}
 }
 
 // GetNodeID returns the dongle's short network address.
@@ -216,13 +240,21 @@ func (c *Client) NetworkState(ctx context.Context) (EmberNetworkStatus, error) {
 
 // GetNetworkParameters returns the current network parameters and node type.
 // Returns an error if the NCP is not joined to a network (EmberStatus != success).
+//
+// The response is EmberStatus(1) + EmberNodeType(1) + EmberNetworkParameters.
+// EZSP v14 extended EmberNetworkParameters with 3 extra bytes between PanID and
+// RadioTxPower (25 bytes total vs 22 in earlier versions). We read ExtPanID and
+// PanID from fixed offsets at the start, and RadioTxPower/RadioChannel from fixed
+// offsets relative to the end — the struct tail is stable across versions:
+//
+//	[...] TxPower(1) Channel(1) JoinMethod(1) NwkManagerId(2) NwkUpdateId(1) Channels(4) = 10 bytes from end
 func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, NetworkParameters, error) {
 	resp, err := c.Command(ctx, frameIDGetNetworkParameters, nil)
 	if err != nil {
 		return 0, NetworkParameters{}, fmt.Errorf("ezsp: getNetworkParameters: %w", err)
 	}
-	// Response: EmberStatus(1) + EmberNodeType(1) + ExtendedPanID(8) + PanID(2) + TxPower(1) + Channel(1) = 14
-	if len(resp) < 14 {
+	// Minimum: EmberStatus(1) + EmberNodeType(1) + EmberNetworkParameters(≥20) = 22
+	if len(resp) < 22 {
 		return 0, NetworkParameters{}, fmt.Errorf("ezsp: getNetworkParameters: response too short (%d bytes)", len(resp))
 	}
 	if resp[0] != 0x00 { // EmberStatus success
@@ -232,8 +264,9 @@ func (c *Client) GetNetworkParameters(ctx context.Context) (EmberNodeType, Netwo
 	var params NetworkParameters
 	copy(params.ExtendedPanID[:], resp[2:10])
 	params.PanID = binary.LittleEndian.Uint16(resp[10:12])
-	params.RadioTxPower = int8(resp[12])
-	params.RadioChannel = resp[13]
+	// TxPower and Channel: read from the end to handle EZSP v14+ struct extension.
+	params.RadioTxPower = int8(resp[len(resp)-10])
+	params.RadioChannel = resp[len(resp)-9]
 	return nodeType, params, nil
 }
 
@@ -273,9 +306,9 @@ func (c *Client) FormNetwork(ctx context.Context, np NetworkParameters) error {
 	binary.LittleEndian.PutUint16(params[8:10], np.PanID)
 	params[10] = byte(np.RadioTxPower)
 	params[11] = np.RadioChannel
-	params[12] = 0x00 // JoinMethod: EMBER_USE_MAC_ASSOCIATION (unused for coordinator)
+	params[12] = 0x00                                    // JoinMethod: EMBER_USE_MAC_ASSOCIATION (unused for coordinator)
 	binary.LittleEndian.PutUint16(params[13:15], 0x0000) // NwkManagerId: coordinator
-	params[15] = 0x00 // NwkUpdateId
+	params[15] = 0x00                                    // NwkUpdateId
 	// Channels: set the bit for the selected channel
 	channelMask := uint32(1) << np.RadioChannel
 	binary.LittleEndian.PutUint32(params[16:20], channelMask)

@@ -240,6 +240,10 @@ func runNetworkState(ctx context.Context, portPath string) error {
 		return fmt.Errorf("network state: %w", err)
 	}
 
+	// Try to resume stored network — after ASH reset the NCP is in "no
+	// network" state until networkInit restores from NVM.
+	_ = client.NetworkInit(ctx)
+
 	state, err := client.NetworkState(ctx)
 	if err != nil {
 		return fmt.Errorf("network state: %w", err)
@@ -294,32 +298,46 @@ func runNetworkInit(ctx context.Context, portPath string, args []string) error {
 		return printNetworkDetails(ctx, client)
 	}
 
-	// Set initial security state with HA defaults.
-	var networkKey [16]byte
-	if _, err := rand.Read(networkKey[:]); err != nil {
-		return fmt.Errorf("network init: generate network key: %w", err)
-	}
-
-	secState := ezsp.EmberInitialSecurityState{
-		Bitmask: ezsp.EmberHavePreconfiguredKey | ezsp.EmberHaveNetworkKey |
-			ezsp.EmberTrustCenterGlobalLinkKey | ezsp.EmberHaveTrustCenterEUI64,
-		PreconfiguredKey: ezsp.ZigbeeHALinkKey,
-		NetworkKey:       networkKey,
-	}
-	if err := client.SetInitialSecurityState(ctx, secState); err != nil {
-		return fmt.Errorf("network init: %w", err)
-	}
-
-	// Try to resume a stored network.
+	// Try to resume a stored network first (uses security state from NVM).
 	resumed := true
 	if err := client.NetworkInit(ctx); err != nil {
-		// No stored network — form a new one.
+		// No stored network — set security and form a new one.
 		resumed = false
+
+		var networkKey [16]byte
+		if _, err := rand.Read(networkKey[:]); err != nil {
+			return fmt.Errorf("network init: generate network key: %w", err)
+		}
+
+		secState := ezsp.EmberInitialSecurityState{
+			Bitmask: ezsp.EmberHavePreconfiguredKey | ezsp.EmberHaveNetworkKey |
+				ezsp.EmberTrustCenterGlobalLinkKey | ezsp.EmberHaveTrustCenterEUI64,
+			PreconfiguredKey: ezsp.ZigbeeHALinkKey,
+			NetworkKey:       networkKey,
+		}
+		if err := client.SetInitialSecurityState(ctx, secState); err != nil {
+			return fmt.Errorf("network init: %w", err)
+		}
+
 		np := ezsp.NetworkParameters{
 			PanID:        uint16(*panID),
 			RadioTxPower: int8(*txPower),
 			RadioChannel: uint8(*channel),
 		}
+		// PAN ID 0xFFFF is the broadcast address and is rejected by some NCP
+		// firmware. Generate a random PAN ID in the valid range instead.
+		if np.PanID == 0xFFFF {
+			var buf [2]byte
+			if _, err := rand.Read(buf[:]); err != nil {
+				return fmt.Errorf("network init: generate PAN ID: %w", err)
+			}
+			np.PanID = uint16(buf[0])<<8 | uint16(buf[1])
+			// Avoid reserved values: 0x0000 (unassigned) and 0xFFFF (broadcast).
+			for np.PanID == 0x0000 || np.PanID == 0xFFFF {
+				np.PanID = 0x1A62 // zigbee2mqtt default
+			}
+		}
+
 		if err := client.FormNetwork(ctx, np); err != nil {
 			return fmt.Errorf("network init: %w", err)
 		}

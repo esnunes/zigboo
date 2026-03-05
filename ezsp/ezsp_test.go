@@ -376,14 +376,17 @@ func TestNetworkState_ResponseTooShort(t *testing.T) {
 
 func TestGetNetworkParameters(t *testing.T) {
 	// Build response: EmberStatus=0x00, NodeType=0x01(coordinator),
-	// ExtendedPanID=[0x01..0x08], PanID=0x1A2B, TxPower=8, Channel=15
+	// ExtendedPanID=[0x01..0x08], PanID=0x1A2B, TxPower=8, Channel=15,
+	// plus trailing fields (joinMethod, nwkManagerId, nwkUpdateId, channels).
+	// Standard response is 22 bytes: status(1) + nodeType(1) + params(20).
 	params := []byte{
 		0x00,                                           // EmberStatus success
 		0x01,                                           // NodeType coordinator
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // ExtendedPanID
 		0x2B, 0x1A, // PanID 0x1A2B (little-endian)
-		0x08, // TxPower 8
-		0x0F, // Channel 15
+		0x08,                                     // TxPower 8
+		0x0F,                                     // Channel 15
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // trailing: joinMethod, nwkManagerId, nwkUpdateId, channels
 	}
 	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
@@ -413,9 +416,47 @@ func TestGetNetworkParameters(t *testing.T) {
 	}
 }
 
+func TestGetNetworkParameters_ExtendedV14(t *testing.T) {
+	// EZSP v14 returns 3 extra bytes between PanID and TxPower.
+	// Total response: 25 bytes: status(1) + nodeType(1) + params(23).
+	// The "read from end" parsing should handle this correctly.
+	params := []byte{
+		0x00,                                           // EmberStatus success
+		0x01,                                           // NodeType coordinator
+		0x01, 0x0F, 0x79, 0xB7, 0x04, 0xF8, 0xED, 0x0F, // ExtendedPanID
+		0xC5, 0x60, // PanID 0x60C5 (little-endian)
+		0x67, 0x08, 0x0B, // 3 extra bytes in v14 extended struct
+		0x08,       // TxPower 8
+		0x0B,       // Channel 11
+		0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0xFF, 0x07, // trailing fields
+	}
+	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
+	client, _, _ := setupMockNCP(t, [][]byte{resp})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	nodeType, netParams, err := client.GetNetworkParameters(ctx)
+	if err != nil {
+		t.Fatalf("GetNetworkParameters() error = %v", err)
+	}
+	if nodeType != NodeTypeCoordinator {
+		t.Errorf("nodeType = %d, want %d (coordinator)", nodeType, NodeTypeCoordinator)
+	}
+	if netParams.PanID != 0x60C5 {
+		t.Errorf("PanID = 0x%04X, want 0x60C5", netParams.PanID)
+	}
+	if netParams.RadioTxPower != 8 {
+		t.Errorf("RadioTxPower = %d, want 8", netParams.RadioTxPower)
+	}
+	if netParams.RadioChannel != 11 {
+		t.Errorf("RadioChannel = %d, want 11", netParams.RadioChannel)
+	}
+}
+
 func TestGetNetworkParameters_EmberStatusError(t *testing.T) {
 	// EmberStatus = 0x70 (not success), rest is garbage.
-	params := make([]byte, 14)
+	params := make([]byte, 22)
 	params[0] = 0x70
 	resp := encodeExtended(0, frameIDGetNetworkParameters, params)
 	client, _, _ := setupMockNCP(t, [][]byte{resp})
