@@ -48,6 +48,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  network   network management (init|state|permit-join)\n")
 		fmt.Fprintf(os.Stderr, "  scan      energy or active channel scan (--type energy|active)\n")
 		fmt.Fprintf(os.Stderr, "  endpoints list registered endpoints and clusters\n")
+		fmt.Fprintf(os.Stderr, "  pair      open network and pair joining devices\n")
 		fmt.Fprintf(os.Stderr, "  config    get/set NCP configuration values (list|get|set)\n")
 		fmt.Fprintf(os.Stderr, "\nFlags:\n")
 		flag.PrintDefaults()
@@ -95,6 +96,8 @@ func run(ctx context.Context, portPath string, cmd string) error {
 		return runScan(ctx, portPath, flag.Args()[1:])
 	case "endpoints":
 		return runEndpoints(ctx, portPath)
+	case "pair":
+		return runPair(ctx, portPath, flag.Args()[1:])
 	case "config":
 		return runConfig(ctx, portPath, flag.Args()[1:])
 	default:

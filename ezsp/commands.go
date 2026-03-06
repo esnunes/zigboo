@@ -1,13 +1,31 @@
 package ezsp
 
-// EmberStatus values used by scan completion.
+// EmberStatus values.
 const (
-	// emberSuccess indicates the operation completed successfully.
-	emberSuccess = 0x00
+	// EmberSuccess indicates the operation completed successfully.
+	EmberSuccess = 0x00
 
 	// emberNoBeacons indicates an active scan completed with no beacons found
 	// on the last channel. This is the normal completion status for active scans.
 	emberNoBeacons = 0x36
+)
+
+// Trust center join status values (from trustCenterJoinHandler callback).
+const (
+	// JoinStatusSecuredRejoin indicates a device rejoined with a known key.
+	JoinStatusSecuredRejoin byte = 0
+	// JoinStatusUnsecuredJoin indicates a new device joined the network.
+	JoinStatusUnsecuredJoin byte = 1
+	// JoinStatusDeviceLeft indicates a device left the network.
+	JoinStatusDeviceLeft byte = 2
+	// JoinStatusUnsecuredRejoin indicates a device rejoined without a key.
+	JoinStatusUnsecuredRejoin byte = 3
+)
+
+// Zigbee HA device IDs.
+const (
+	// DeviceIDConfigurationTool is the HA device ID for a configuration tool (0x0005).
+	DeviceIDConfigurationTool uint16 = 0x0005
 )
 
 // EZSP command frame IDs.
@@ -33,8 +51,8 @@ const (
 	// frameIDScanCompleteHandler is the callback when a scan finishes (0x001C).
 	frameIDScanCompleteHandler = 0x001C
 
-	// frameIDPermitJoining opens or closes the network for device joining (0x0022).
-	frameIDPermitJoining = 0x0022
+	// FrameIDPermitJoining opens or closes the network for device joining (0x0022).
+	FrameIDPermitJoining = 0x0022
 
 	// frameIDGetEUI64 returns the dongle's IEEE 802.15.4 address (0x0026).
 	frameIDGetEUI64 = 0x0026
@@ -56,6 +74,27 @@ const (
 
 	// frameIDSetConfigurationValue writes a configuration value (0x0053).
 	frameIDSetConfigurationValue = 0x0053
+
+	// FrameIDAddEndpoint registers a new endpoint on the NCP (0x0002).
+	FrameIDAddEndpoint = 0x0002
+
+	// FrameIDChildJoinHandler is the callback when a child device joins (0x0023).
+	FrameIDChildJoinHandler = 0x0023
+
+	// FrameIDTrustCenterJoinHandler is the callback for trust center join events (0x0024).
+	FrameIDTrustCenterJoinHandler = 0x0024
+
+	// FrameIDSendUnicast sends an APS unicast message (0x0034).
+	FrameIDSendUnicast = 0x0034
+
+	// FrameIDMessageSentHandler is the callback confirming message delivery (0x003F).
+	FrameIDMessageSentHandler = 0x003F
+
+	// FrameIDIncomingMessageHandler is the callback for incoming APS messages (0x0045).
+	FrameIDIncomingMessageHandler = 0x0045
+
+	// FrameIDStackStatusHandler is the callback for network state changes (0x0019).
+	FrameIDStackStatusHandler = 0x0019
 
 	// frameIDGetEndpoint returns the endpoint number at a given index (0x012E).
 	frameIDGetEndpoint = 0x012E
